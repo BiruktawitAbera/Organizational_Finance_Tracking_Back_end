@@ -1,0 +1,31 @@
+{% comment %} <!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Register</title>
+  </head>
+  <body>
+    <h2>Register</h2>
+
+    <form method="POST" action="{% url 'register' %}">
+      <!-- Replace 'register' with your actual view name -->
+      {% csrf_token %}
+
+      <label for="username">Username:</label>
+      <input type="text" name="username" required />
+
+      <label for="email">Email:</label>
+      <input type="email" name="email" required />
+
+      <label for="password1">Password:</label>
+      <input type="password" name="password1" required />
+
+      <label for="password2">Confirm Password:</label>
+      <input type="password" name="password2" required />
+
+      <button type="submit">Submit</button>
+    </form>
+  </body>
+</html>
+{% endcomment %}
