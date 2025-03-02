@@ -47,17 +47,15 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 )
 
             # If password has already been changed, proceed with issuing tokens
-            # Use the parent class to generate the access and refresh tokens
             response = super().post(request, *args, **kwargs)
 
             # Optionally, you can add custom data to the response here if needed
-            # Example: Attach the user's full name to the token response
             response.data['full_name'] = user.get_full_name()
 
             return response
 
-        # If the user credentials are invalid, return a 401 Unauthorized response
         return Response({"detail": "Invalid email or password"}, status=status.HTTP_401_UNAUTHORIZED)
+
 # ✅ Force users to change password
 class EnforcePasswordChangeView(APIView):
     permission_classes = [IsAuthenticated]
@@ -70,17 +68,14 @@ class EnforcePasswordChangeView(APIView):
         new_password = request.data.get("new_password")
         confirm_password = request.data.get("confirm_password")
 
-        # Ensure all required fields are provided
         if not old_password or not new_password or not confirm_password:
             return Response({"error": "Old password, new password, and confirm password are required"},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Check if the new password matches the confirm password
         if new_password != confirm_password:
             return Response({"error": "New password and confirm password must match"},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate the old password
         if not user.check_password(old_password):
             return Response({"error": "Old password is incorrect"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -99,8 +94,8 @@ class EnforcePasswordChangeView(APIView):
             "access": access_token,
             "refresh": refresh_token
         }, status=status.HTTP_200_OK)
-    
-    # ✅ Admin dashboard view - Users must change password before access
+
+# ✅ Admin dashboard view - Users must change password before access
 class AdminDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -109,3 +104,11 @@ class AdminDashboardView(APIView):
             return Response({"detail": "Password change required"}, status=status.HTTP_403_FORBIDDEN)
 
         return Response({"message": "Welcome, Admin!"}, status=status.HTTP_200_OK)
+
+# ✅ Get user role endpoint
+class UserRoleView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        return Response({"role": user.role})  # Assuming `role` is a field in your User model
