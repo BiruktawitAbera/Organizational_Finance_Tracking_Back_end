@@ -25,32 +25,30 @@ class RegisterAccountsView(generics.CreateAPIView):
 
         response.data["access"] = access_token
         response.data["refresh"] = str(refresh)
+        response.data["role"] = user.role  # ✅ Add user role to response
 
         return response
 
-# ✅ Custom login view - Enforce password change for temporary passwords
+# ✅ Custom login view - Includes role in response
 class CustomTokenObtainPairView(TokenObtainPairView):
     def post(self, request, *args, **kwargs):
-        # Extract email and password from request
         email = request.data.get("email")
         password = request.data.get("password")
 
-        # Authenticate user with the provided credentials
         user = authenticate(request, username=email, password=password)
 
         if user:
-            # Check if the user is required to change their password
+            # ✅ Check if the user is required to change their password
             if not user.has_changed_password:
                 return Response(
                     {"detail": "Password change required", "force_password_change": True},
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-            # If password has already been changed, proceed with issuing tokens
+            # ✅ Proceed with issuing tokens
             response = super().post(request, *args, **kwargs)
-
-            # Optionally, you can add custom data to the response here if needed
             response.data['full_name'] = user.get_full_name()
+            response.data['role'] = user.role  # ✅ Include user role
 
             return response
 
@@ -63,36 +61,31 @@ class EnforcePasswordChangeView(APIView):
     def post(self, request):
         user = request.user
 
-        # Get the old password, new password, and confirm password from the request data
         old_password = request.data.get("old_password")
         new_password = request.data.get("new_password")
         confirm_password = request.data.get("confirm_password")
 
         if not old_password or not new_password or not confirm_password:
-            return Response({"error": "Old password, new password, and confirm password are required"},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "All password fields are required"}, status=status.HTTP_400_BAD_REQUEST)
 
         if new_password != confirm_password:
-            return Response({"error": "New password and confirm password must match"},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Passwords do not match"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not user.check_password(old_password):
-            return Response({"error": "Old password is incorrect"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Incorrect old password"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Set the new password
+        # ✅ Set the new password
         user.set_password(new_password)
-        user.has_changed_password = True  # Mark password as changed
+        user.has_changed_password = True  # ✅ Mark password as changed
         user.save()
 
-        # Generate new JWT tokens after the password change
+        # ✅ Generate new JWT tokens after the password change
         refresh = RefreshToken.for_user(user)
-        access_token = str(refresh.access_token)
-        refresh_token = str(refresh)
 
         return Response({
             "message": "Password updated successfully",
-            "access": access_token,
-            "refresh": refresh_token
+            "access": str(refresh.access_token),
+            "refresh": str(refresh)
         }, status=status.HTTP_200_OK)
 
 # ✅ Admin dashboard view - Users must change password before access
@@ -110,5 +103,4 @@ class UserRoleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        user = request.user
-        return Response({"role": user.role})  # Assuming `role` is a field in your User model
+        return Response({"role": request.user.role})  # ✅ Ensure `role` is always returned
