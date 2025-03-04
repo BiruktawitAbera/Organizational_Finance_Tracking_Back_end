@@ -6,8 +6,21 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
+from functools import wraps
 
 User = get_user_model()
+
+# ✅ Decorator for Role-Based Access Control
+def role_required(allowed_roles):
+    """Decorator to restrict API access based on user role"""
+    def decorator(view_func):
+        @wraps(view_func)
+        def _wrapped_view(self, request, *args, **kwargs):
+            if request.user.role not in allowed_roles:
+                return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+            return view_func(self, request, *args, **kwargs)
+        return _wrapped_view
+    return decorator
 
 # ✅ Register a new user
 class RegisterAccountsView(generics.CreateAPIView):
@@ -60,10 +73,12 @@ class EnforcePasswordChangeView(APIView):
 
     def post(self, request):
         user = request.user
-
         old_password = request.data.get("old_password")
         new_password = request.data.get("new_password")
         confirm_password = request.data.get("confirm_password")
+
+        print("User:", user)  # ✅ Check if Django recognizes the logged-in user
+        print("Old Password Entered:", old_password)  # ✅ Check if password is received correctly
 
         if not old_password or not new_password or not confirm_password:
             return Response({"error": "All password fields are required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -71,7 +86,9 @@ class EnforcePasswordChangeView(APIView):
         if new_password != confirm_password:
             return Response({"error": "Passwords do not match"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # ✅ Debugging: Check if old password matches
         if not user.check_password(old_password):
+            print("❌ Old password does not match!")
             return Response({"error": "Incorrect old password"}, status=status.HTTP_400_BAD_REQUEST)
 
         # ✅ Set the new password
@@ -87,20 +104,41 @@ class EnforcePasswordChangeView(APIView):
             "access": str(refresh.access_token),
             "refresh": str(refresh)
         }, status=status.HTTP_200_OK)
-
-# ✅ Admin dashboard view - Users must change password before access
 class AdminDashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @role_required(["admin"])
     def get(self, request):
-        if not getattr(request.user, "has_changed_password", False):  # Ensure attribute exists
+        if not request.user.has_changed_password:
             return Response({"detail": "Password change required"}, status=status.HTTP_403_FORBIDDEN)
 
         return Response({"message": "Welcome, Admin!"}, status=status.HTTP_200_OK)
+
+# ✅ Manager Dashboard - Requires Manager or Admin Role
+class ManagerDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @role_required(["admin", "manager"])
+    def get(self, request):
+        if not request.user.has_changed_password:
+            return Response({"detail": "Password change required"}, status=status.HTTP_403_FORBIDDEN)
+
+        return Response({"message": "Welcome, Manager!"}, status=status.HTTP_200_OK)
+
+# ✅ Department Head Dashboard - Requires Department Head Role
+class DepartmentHeadDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @role_required(["admin", "manager", "department_head"])
+    def get(self, request):
+        if not request.user.has_changed_password:
+            return Response({"detail": "Password change required"}, status=status.HTTP_403_FORBIDDEN)
+
+        return Response({"message": "Welcome, Department Head!"}, status=status.HTTP_200_OK)
 
 # ✅ Get user role endpoint
 class UserRoleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response({"role": request.user.role})  # ✅ Ensure `role` is always returned
+        return Response({"role": request.user.role})  # ✅ Ensure role is always returned

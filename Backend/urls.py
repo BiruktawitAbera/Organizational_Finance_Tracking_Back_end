@@ -26,5 +26,5 @@ urlpatterns = [
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),  # Custom login with password change enforcement
     path('change-password/', EnforcePasswordChangeView.as_view(), name='change_password'),  # Password change page
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('admin-dashboard/', AdminDashboardView.as_view(), name='admin_dashboard'),  # Admin dashboard
+    path('/', AdminDashboardView.as_view(), name='admin_dashboard'),  # Admin dashboard
 ]

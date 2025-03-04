@@ -7,4 +7,4 @@ urlpatterns = [
     path('change-password/', EnforcePasswordChangeView.as_view(), name='change_password'),
     path('user-role/', UserRoleView.as_view(), name="user_role"),
 # Enforce page
-]
+] 
