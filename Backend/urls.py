@@ -22,6 +22,7 @@ urlpatterns = [
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
+
     # Password management
     path('change-password/', EnforcePasswordChangeView.as_view(), name='change_password'),
     path('admin-dashboard/', AdminDashboardView.as_view(), name='admin_dashboard'),
@@ -31,3 +32,4 @@ urlpatterns = [
     path('api/accounts/reset-password/<uidb64>/<token>/', PasswordResetConfirmView.as_view(), name='reset-password-confirm'),
 
 ]
+

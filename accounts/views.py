@@ -16,7 +16,6 @@ from rest_framework import status, generics
 from rest_framework.response import Response
 from .serializers import PasswordResetSerializer
 
-
 User = get_user_model()
 
 # ✅ Decorator for Role-Based Access Control
@@ -150,6 +149,7 @@ class UserRoleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+
         return Response({"role": request.user.role})  # ✅ Ensure role is always returned
     
 class RequestPasswordResetView(generics.GenericAPIView):

@@ -24,3 +24,4 @@ urlpatterns = [
     path("auth/", include("djoser.urls.jwt")),
     path("auth/password/reset/confirm/", UserViewSet.as_view({'post': 'reset_password_confirm'})),
 ]
+
