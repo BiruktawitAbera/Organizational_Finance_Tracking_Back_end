@@ -170,3 +170,8 @@ DEFAULT_FROM_EMAIL = 'birukspace0900@gmail.com'
 
 EMAIL_TIMEOUT = 30  # Reduces wait time in case of failure
 EMAIL_USE_LOCALTIME = True
+
+DJOSER = {
+    'PASSWORD_RESET_CONFIRM_SERIALIZER': 'accounts.serializers.CustomPasswordResetConfirmSerializer',
+}
+

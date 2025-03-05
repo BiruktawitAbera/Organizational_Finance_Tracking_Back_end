@@ -1,11 +1,17 @@
 from django.core.mail import send_mail
 from django.utils.crypto import get_random_string
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode
+from django.utils.encoding import force_bytes
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from decimal import Decimal
+from django.conf import settings
 
 User = get_user_model()
 
+
+# ✅ Account Registration Serializer (Includes Email-Based Password Setup)
 class AccountRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -35,11 +41,62 @@ class AccountRegistrationSerializer(serializers.ModelSerializer):
             send_mail(
                 'Your Temporary Password',
                 f'Hello {user.username},\n\nYour temporary password is: {temporary_password}\nPlease change it after logging in.',
-                'birukspace0900@gmail.com',  # Must match EMAIL_HOST_USER in settings.py
+                settings.EMAIL_HOST_USER,  # Use email from settings
                 [user.email],
                 fail_silently=False,
             )
         except Exception as e:
             print(f"Email sending failed: {e}")  # Log the error
 
+        return user
+
+# ✅ Password Reset Request Serializer
+class PasswordResetSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        """Ensure the email is associated with an existing user."""
+        if not User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("No user found with this email address.")
+        return value
+
+    def send_password_reset_email(self, request):
+        """Generate password reset link and send email."""
+        email = self.validated_data["email"]
+        user = User.objects.get(email=email)
+        uid = urlsafe_base64_encode(force_bytes(user.pk))  # Base64 encode the user ID
+        token = default_token_generator.make_token(user)  # Generate token
+        domain = request.get_host()  # Get the domain dynamically
+        reset_link = f"http://localhost:5173/ResetPassword?uidb64={uid}&token={token}"   # Ensure this matches the URL pattern
+
+        # Send email
+        try:
+            send_mail(
+                'Password Reset Request',
+                f'Hello {user.username},\n\nClick the link below to reset your password:\n{reset_link}',
+                settings.EMAIL_HOST_USER,  # Use email from settings
+                [user.email],
+                fail_silently=False,
+            )
+        except Exception as e:
+            print(f"Email sending failed: {e}")  # Log the error
+
+        return reset_link
+
+# ✅ Password Reset Confirmation Serializer
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate(self, data):
+        """Ensure new password and confirm password match."""
+        if data["new_password"] != data["confirm_password"]:
+            raise serializers.ValidationError({"password": "Passwords do not match"})
+        return data
+
+    def save(self, user):
+        """Set the new password for the user."""
+        user.set_password(self.validated_data["new_password"])
+        user.save()
+        user.is_active = True
         return user
