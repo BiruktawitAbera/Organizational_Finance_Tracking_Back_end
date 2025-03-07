@@ -7,6 +7,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from decimal import Decimal
 from django.conf import settings
+from .models import Budget
 
 User = get_user_model()
 
@@ -100,3 +101,13 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         user.save()
         user.is_active = True
         return user
+    
+
+
+class BudgetSerializer(serializers.ModelSerializer):
+    allocated_by = serializers.ReadOnlyField(source='allocated_by.email')  
+    allocated_to = serializers.ReadOnlyField(source='allocated_to.email')
+
+    class Meta:
+        model = Budget
+        fields = ['id', 'department', 'allocated_amount', 'allocated_by', 'allocated_to', 'allocated_at', 'updated_at']

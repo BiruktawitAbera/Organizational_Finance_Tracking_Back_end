@@ -8,7 +8,13 @@ from .views import (
     AdminDashboardView, 
     EnforcePasswordChangeView, 
     RequestPasswordResetView, 
-    PasswordResetConfirmView
+    PasswordResetConfirmView,
+    BudgetCreateView, 
+    BudgetListView,
+    BudgetDetailView, 
+    BudgetUpdateView, 
+    BudgetDeleteView
+
 )
 
 urlpatterns = [
@@ -23,5 +29,13 @@ urlpatterns = [
     path("auth/", include("djoser.urls")),
     path("auth/", include("djoser.urls.jwt")),
     path("auth/password/reset/confirm/", UserViewSet.as_view({'post': 'reset_password_confirm'})),
+
+    # budget allocation
+    
+    path("budgets/", BudgetListView.as_view(), name="budget-list"),  # GET only
+    path('budget/', BudgetCreateView.as_view(), name='budget-create'),  # Create budget allocation
+    path('budget/<str:department_name>/', BudgetDetailView.as_view(), name='budget-detail'),  # View budget
+    path('budget/<str:department_name>/update/', BudgetUpdateView.as_view(), name='budget-update'),  # Update budget
+    path('budget/<str:department_name>/delete/', BudgetDeleteView.as_view(), name='budget-delete'),  # Delete budget
 ]
 
