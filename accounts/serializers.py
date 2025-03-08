@@ -111,3 +111,4 @@ class BudgetSerializer(serializers.ModelSerializer):
     class Meta:
         model = Budget
         fields = ['id', 'department', 'allocated_amount', 'allocated_by', 'allocated_to', 'allocated_at', 'updated_at']
+        read_only_fields = ["id", "allocated_by", "allocated_at"]

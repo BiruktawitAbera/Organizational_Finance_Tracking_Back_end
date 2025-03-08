@@ -1,5 +1,4 @@
 # accounts/urls.py
-from django.urls import path
 from django.urls import path, include
 from djoser.views import UserViewSet
 from .views import (
@@ -14,7 +13,6 @@ from .views import (
     BudgetDetailView, 
     BudgetUpdateView, 
     BudgetDeleteView
-
 )
 
 urlpatterns = [
@@ -30,12 +28,15 @@ urlpatterns = [
     path("auth/", include("djoser.urls.jwt")),
     path("auth/password/reset/confirm/", UserViewSet.as_view({'post': 'reset_password_confirm'})),
 
-    # budget allocation
-    
+    # Budget allocation URLs
     path("budgets/", BudgetListView.as_view(), name="budget-list"),  # GET only
     path('budget/', BudgetCreateView.as_view(), name='budget-create'),  # Create budget allocation
-    path('budget/<str:department_name>/', BudgetDetailView.as_view(), name='budget-detail'),  # View budget
-    path('budget/<str:department_name>/update/', BudgetUpdateView.as_view(), name='budget-update'),  # Update budget
-    path('budget/<str:department_name>/delete/', BudgetDeleteView.as_view(), name='budget-delete'),  # Delete budget
-]
+    path('budget/update/', BudgetUpdateView.as_view(), name='budget-update'),  # Update budget for authenticated user
+    path('budget/delete/', BudgetDeleteView.as_view(), name='budget-delete'),  # Delete budget for authenticated user
+    path('budget/update/', BudgetUpdateView.as_view(), name='budget-update'),
+    path('budget/<int:id>/', BudgetDetailView.as_view(), name='budget-detail'),  # Fetch budget by ID
+    path('budget/<int:id>/update/', BudgetUpdateView.as_view(), name='budget-update'),  #
+    path('budget/<int:id>/detail/', BudgetDetailView.as_view(), name='budget-detail'),  # Include id in the URL
+    path('budget/<int:id>/delete/', BudgetDeleteView.as_view(), name='budget-delete'),
 
+]
