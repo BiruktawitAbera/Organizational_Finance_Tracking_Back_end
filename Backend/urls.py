@@ -8,7 +8,6 @@ from accounts.views import (
     RequestPasswordResetView,
     PasswordResetConfirmView,
 )
-
 from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
@@ -16,7 +15,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
 
     # API URLs for accounts
-    path('api/accounts/', include('accounts.urls')),  # Make sure this is correctly added
+    path('api/accounts/', include('accounts.urls')),  
 
     # JWT Authentication
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),

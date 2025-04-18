@@ -16,14 +16,43 @@ from rest_framework import status, generics
 from rest_framework.response import Response
 from .serializers import PasswordResetSerializer
 
-from .models import Budget, User
-from .serializers import BudgetSerializer
+from .models import  User
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from .models import CustomUser
 import logging
+from django.db.models import Q , Sum
+from rest_framework import generics, permissions, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from .models import AdminBudget, ManagerBudget, User
+from .serializers import AdminBudgetSerializer, ManagerBudgetSerializer, UserSerializer
+
+from .models import   CustomUser
+from .serializers import (
+    AccountRegistrationSerializer,
+    PasswordResetSerializer,
+    PasswordResetConfirmSerializer,
+
+)
+
+# Get user model
+User = get_user_model()
+logger = logging.getLogger(__name__)
+
+# Custom permission classes
+class IsManager(permissions.BasePermission):
+    """Allows access only to manager users."""
+    def has_permission(self, request, view):
+        return request.user.is_manager()
+
+class IsDepartmentHead(permissions.BasePermission):
+    """Allows access only to department head users."""
+    def has_permission(self, request, view):
+        return request.user.is_department_head()
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 # ✅ Decorator for Role-Based Access Control
 def role_required(allowed_roles):
@@ -156,9 +185,20 @@ class UserRoleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        return Response({"role": request.user.role})
 
-        return Response({"role": request.user.role})  # ✅ Ensure role is always returned
-    
+class UserListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        role = request.query_params.get('role')
+        if not role:
+            return Response({"error": "Role parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        users = CustomUser.objects.filter(role=role)
+        data = [{"email": user.email, "department": user.department} for user in users]
+        return Response(data)
+
 class RequestPasswordResetView(generics.GenericAPIView):
     serializer_class = PasswordResetSerializer
     permission_classes = [AllowAny]  # Allow unauthenticated access to this endpoint
@@ -208,107 +248,167 @@ class PasswordResetConfirmView(APIView):
         # Return a success message indicating that the password was successfully reset
         return Response({"detail": "Password reset successful. You can now log in."}, status=status.HTTP_200_OK)
 
-class BudgetListView(generics.ListAPIView):
-    queryset = Budget.objects.all()
-    serializer_class = BudgetSerializer
+class AdminBudgetListView(generics.ListAPIView):
+    serializer_class = AdminBudgetSerializer
     permission_classes = [permissions.IsAuthenticated]
-        
-class BudgetCreateView(generics.CreateAPIView):
-    serializer_class = BudgetSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_admin():
+            return AdminBudget.objects.filter(allocated_by=user)
+        elif user.is_manager():
+            return AdminBudget.objects.filter(allocated_to=user, budget_level='organization')
+        elif user.is_department_head():
+            return AdminBudget.objects.filter(allocated_to=user, budget_level='department')
+        return AdminBudget.objects.none()
+
+class AdminBudgetCreateView(generics.CreateAPIView):
+    serializer_class = AdminBudgetSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        serializer.save(allocated_by=self.request.user)
+
+class AdminBudgetDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, id):
+        try:
+            budget = AdminBudget.objects.get(
+                Q(id=id) & 
+                (Q(allocated_by=request.user) | Q(allocated_to=request.user))
+            )
+            serializer = AdminBudgetSerializer(budget)
+            return Response(serializer.data)
+        except AdminBudget.DoesNotExist:
+            return Response(
+                {"error": "Budget not found or unauthorized access"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+class AdminBudgetUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def put(self, request, id):
+        try:
+            budget = AdminBudget.objects.get(id=id)
+            if budget.allocated_by != request.user:
+                return Response(
+                    {"error": "You can only update your own allocations"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            serializer = AdminBudgetSerializer(budget, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except AdminBudget.DoesNotExist:
+            return Response(
+                {"error": "Budget not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+class AdminBudgetDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, id):
+        try:
+            budget = AdminBudget.objects.get(id=id)
+            if budget.allocated_by != request.user:
+                return Response(
+                    {"error": "You can only delete your own allocations"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            budget.delete()
+            return Response(
+                {"message": "Budget allocation deleted successfully"},
+                status=status.HTTP_204_NO_CONTENT
+            )
+        except AdminBudget.DoesNotExist:
+            return Response(
+                {"error": "Budget not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+# Manager Budget Views
+class ManagerBudgetListView(generics.ListAPIView):
+    serializer_class = ManagerBudgetSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_manager():
+            return ManagerBudget.objects.filter(allocated_by=user)
+        elif user.is_department_head():
+            return ManagerBudget.objects.filter(allocated_to=user)
+        return ManagerBudget.objects.none()
+
+class ManagerBudgetCreateView(generics.CreateAPIView):
+    serializer_class = ManagerBudgetSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def perform_create(self, serializer):
         user = self.request.user
+        if not user.is_manager():
+            raise permissions.PermissionDenied("Only managers can allocate department budgets")
+        
+        budget_data = serializer.validated_data
+        amount = budget_data.get('amount')
+        budget_level = budget_data.get('budget_level')
 
-        # Check if the user is a manager
-        if user.role != "manager":
-            return Response({"error": "Only managers can allocate budgets."}, status=status.HTTP_403_FORBIDDEN)
+        if budget_level != 'department':
+            raise serializers.ValidationError("Managers can only allocate department-level budgets")
 
-        # Automatically determine the department head for the manager's department
-        try:
-            department_head = CustomUser.objects.get(department=user.department, role="department_head")
-        except CustomUser.DoesNotExist:
-            return Response({"error": "No department head found for your department."}, status=status.HTTP_404_NOT_FOUND)
+        total_allocated = ManagerBudget.objects.filter(
+            allocated_by=user,
+            budget_level='department'
+        ).aggregate(total=Sum('amount'))['total'] or 0
 
-        # Save the budget allocation
-        serializer.save(allocated_by=user, allocated_to=department_head, department=user.department)
-# ✅ Update an existing budget
-logger = logging.getLogger(__name__)
+        manager_budget = AdminBudget.objects.filter(
+            allocated_to=user,
+            budget_level='organization'
+        ).first()
 
-class BudgetUpdateView(APIView):
+        if not manager_budget:
+            raise serializers.ValidationError("No organizational budget allocated to this manager")
+
+        remaining_budget = float(manager_budget.allocated_amount) - float(total_allocated)
+
+        if float(amount) > remaining_budget:
+            raise serializers.ValidationError(
+                f"Not enough remaining budget. Only {remaining_budget} available."
+            )
+
+        serializer.save(allocated_by=user)
+
+class ManagerBudgetRemainingView(generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    def put(self, request, id):
-        # Log the request data for debugging
-        logger.debug(f"Request data: {request.data}")
-        logger.debug(f"Authenticated user: {request.user}")
-        logger.debug(f"Budget ID: {id}")
+    def get(self, request):
+        user = request.user
+        if not user.is_manager():
+            raise permissions.PermissionDenied("Only managers can check remaining budget")
 
-        # Ensure the user is a manager
-        if request.user.role != "manager":
-            logger.debug("User is not a manager.")
-            return Response({"error": "Only managers can update budgets."}, status=status.HTTP_403_FORBIDDEN)
+        manager_budget = AdminBudget.objects.filter(
+            allocated_to=user,
+            budget_level='organization'
+        ).first()
 
-        # Get the budget by ID and ensure it belongs to the authenticated user
-        try:
-            budget = Budget.objects.get(id=id, allocated_by=request.user)
-            logger.debug(f"Found budget: {budget}")
-        except Budget.DoesNotExist:
-            logger.debug("Budget not found.")
-            return Response({"error": "Budget not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not manager_budget:
+            return Response(
+                {"error": "No organizational budget allocated to this manager"},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-        # Validate and update the budget
-        serializer = BudgetSerializer(budget, data=request.data, partial=True)
-        if serializer.is_valid():
-            logger.debug("Budget data is valid.")
-            serializer.save()
-            logger.debug(f"Updated budget: {serializer.data}")
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        else:
-            logger.debug(f"Validation errors: {serializer.errors}")
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-# ✅ Remove a budget allocation
-logger = logging.getLogger(__name__)
+        total_allocated = ManagerBudget.objects.filter(
+            allocated_by=user,
+            budget_level='department'
+        ).aggregate(total=Sum('amount'))['total'] or 0
 
-class BudgetDeleteView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+        remaining = float(manager_budget.allocated_amount) - float(total_allocated)
 
-    def delete(self, request, id):
-        logger.debug(f"Authenticated user: {request.user}")
-        logger.debug(f"Budget ID: {id}")
-
-        # Ensure the user is a manager
-        if request.user.role != "manager":
-            logger.debug("User is not a manager.")
-            return Response({"error": "Only managers can delete budgets."}, status=status.HTTP_403_FORBIDDEN)
-
-        # Ensure the budget exists and belongs to the authenticated manager
-        try:
-            budget = Budget.objects.get(id=id, allocated_by=request.user)
-            logger.debug(f"Found budget: {budget}")
-        except Budget.DoesNotExist:
-            logger.debug("Budget not found.")
-            return Response({"error": "Budget not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Delete the budget
-        budget.delete()
-        logger.debug("Budget deleted successfully.")
-        return Response({"message": "Budget allocation deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
-    
-class BudgetDetailView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request, id):
-        # Ensure the user is authorized (manager or department head)
-        if request.user.role not in ["manager", "department_head"]:
-            return Response({"error": "Unauthorized access."}, status=status.HTTP_403_FORBIDDEN)
-
-        # Get the budget by ID and ensure it belongs to the authenticated user
-        try:
-            budget = Budget.objects.get(id=id, allocated_by=request.user)
-        except Budget.DoesNotExist:
-            return Response({"error": "Budget not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Serialize and return the budget
-        serializer = BudgetSerializer(budget)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({
+            'total_amount': manager_budget.allocated_amount,
+            'allocated_amount': total_allocated,
+            'remaining_amount': remaining,
+        })

@@ -7,7 +7,11 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from decimal import Decimal
 from django.conf import settings
-from .models import Budget
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from .models import  AdminBudget, ManagerBudget , User
+from django.db.models import Sum  # Add this import at the top
+from .models import AdminBudget, ManagerBudget
+
 
 User = get_user_model()
 
@@ -50,6 +54,7 @@ class AccountRegistrationSerializer(serializers.ModelSerializer):
             print(f"Email sending failed: {e}")  # Log the error
 
         return user
+
 
 # ✅ Password Reset Request Serializer
 class PasswordResetSerializer(serializers.Serializer):
@@ -101,14 +106,145 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         user.save()
         user.is_active = True
         return user
-    
 
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'email']
+        read_only_fields = fields   
 
-class BudgetSerializer(serializers.ModelSerializer):
-    allocated_by = serializers.ReadOnlyField(source='allocated_by.email')  
+# ✅ Admin Budget Allocation Serializer
+class AdminBudgetSerializer(serializers.ModelSerializer):
+    allocated_by = serializers.ReadOnlyField(source='allocated_by.email')
     allocated_to = serializers.ReadOnlyField(source='allocated_to.email')
+    allocated_to_email = serializers.EmailField(write_only=True)
+    budget_level = serializers.ChoiceField(choices=AdminBudget.BUDGET_LEVEL_CHOICES)
 
     class Meta:
-        model = Budget
-        fields = ['id', 'department', 'allocated_amount', 'allocated_by', 'allocated_to', 'allocated_at', 'updated_at']
-        read_only_fields = ["id", "allocated_by", "allocated_at"]
+        model = AdminBudget
+        fields = [
+            'id', 
+            'budget_level',
+            'allocated_amount', 
+            'allocated_by', 
+            'allocated_to',
+            'allocated_to_email',
+            'allocated_at', 
+            'updated_at',
+            'created_at'
+        ]
+        read_only_fields = ["allocated_by", "allocated_at", "allocated_to"]
+
+    def validate(self, data):
+        request = self.context.get('request')
+
+        if not request or not hasattr(request, 'user') or not request.user.is_authenticated:
+            raise serializers.ValidationError("User must be authenticated to allocate a budget.")
+
+        allocated_to_email = data.pop('allocated_to_email', None)
+        budget_level = data.get('budget_level')
+
+        # Get allocated_to user
+        try:
+            allocated_to = User.objects.get(email=allocated_to_email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({"allocated_to_email": "User with this email does not exist."})
+
+        # Validate allocation hierarchy
+        if budget_level == 'organization':
+            if not request.user.is_admin():
+                raise serializers.ValidationError("Only admins can allocate organization budgets.")
+            if not allocated_to.is_manager():
+                raise serializers.ValidationError("Organization budgets must be allocated to managers.")
+
+        elif budget_level == 'department':
+            if not request.user.is_admin():
+                raise serializers.ValidationError("Only admins can allocate department budgets.")
+            if not allocated_to.is_department_head():
+                raise serializers.ValidationError("Department budgets must be allocated to department heads.")
+
+        # Add validated data
+        data['allocated_to'] = allocated_to
+        return data
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        validated_data['allocated_by'] = request.user
+        return super().create(validated_data)
+
+class ManagerBudgetSerializer(serializers.ModelSerializer):
+    allocated_by = serializers.ReadOnlyField(source='allocated_by.email')
+    allocated_to = serializers.ReadOnlyField(source='allocated_to.email')
+    allocated_to_email = serializers.EmailField(write_only=True)
+    budget_level = serializers.ChoiceField(choices=ManagerBudget.BUDGET_LEVEL_CHOICES)
+    department = serializers.ChoiceField(choices=ManagerBudget.DEPARTMENT_CHOICES, required=False, allow_null=True)
+    
+    class Meta:
+        model = ManagerBudget
+        fields = [
+            'id',
+            'allocated_by',
+            'allocated_to',
+            'allocated_to_email',
+            'amount',
+            'budget_level',
+            'department',
+            'fiscal_year',
+            'created_at',
+            'updated_at',
+            'notes'
+        ]
+        read_only_fields = [
+            'allocated_by',
+            'created_at',
+            'updated_at'
+        ]
+
+    def validate(self, data):
+        request = self.context.get('request')
+        budget_level = data.get('budget_level')
+        department = data.get('department')
+        allocated_to_email = data.get('allocated_to_email')
+
+        # Get user by email
+        try:
+            allocated_to = User.objects.get(email=allocated_to_email)
+            data['allocated_to'] = allocated_to
+        except User.DoesNotExist:
+            raise serializers.ValidationError({
+                'allocated_to_email': 'User with this email does not exist'
+            })
+
+        if request and request.user.is_authenticated:
+            if request.user.is_manager() and budget_level == 'department':
+                if not allocated_to.is_department_head():
+                    raise serializers.ValidationError(
+                        "Department budgets must be allocated to department heads"
+                    )
+                
+                if not department:
+                    raise serializers.ValidationError(
+                        "Department must be specified for department-level budgets"
+                    )
+                
+                total_allocated = ManagerBudget.objects.filter(
+                    allocated_by=request.user,
+                    budget_level='department'
+                ).aggregate(total=Sum('amount'))['total'] or 0
+                
+                manager_budget = AdminBudget.objects.filter(
+                    allocated_to=request.user,
+                    budget_level='organization'
+                ).first()
+                
+                if manager_budget and float(data['amount']) > (float(manager_budget.allocated_amount) - float(total_allocated)):
+                    raise serializers.ValidationError(
+                        f"Not enough remaining budget. Only {float(manager_budget.allocated_amount) - float(total_allocated)} available."
+                    )
+
+        return data
+
+    def create(self, validated_data):
+        validated_data.pop('allocated_to_email', None)
+        validated_data['allocated_by'] = self.context['request'].user
+        return super().create(validated_data)

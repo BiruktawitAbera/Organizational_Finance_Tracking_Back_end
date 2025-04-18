@@ -8,11 +8,22 @@ from .views import (
     EnforcePasswordChangeView, 
     RequestPasswordResetView, 
     PasswordResetConfirmView,
-    BudgetCreateView, 
-    BudgetListView,
-    BudgetDetailView, 
-    BudgetUpdateView, 
-    BudgetDeleteView
+# budget allocation
+        # Admin Budget Views
+    AdminBudgetListView,
+    AdminBudgetCreateView,
+    AdminBudgetDetailView,
+    AdminBudgetUpdateView,
+    AdminBudgetDeleteView,
+    
+    # Manager Budget Views
+    ManagerBudgetListView,
+    ManagerBudgetCreateView,
+    ManagerBudgetRemainingView,
+    UserListView,
+    ManagerBudgetListView,
+    ManagerBudgetCreateView,
+    ManagerBudgetRemainingView
 )
 
 urlpatterns = [
@@ -20,6 +31,7 @@ urlpatterns = [
     path('dashboard/admin/', AdminDashboardView.as_view(), name='admin_dashboard'), 
     path('change-password/', EnforcePasswordChangeView.as_view(), name='change_password'),
     path('user-role/', UserRoleView.as_view(), name="user_role"),
+    path('users/', UserListView.as_view(), name='user-list'),
     path('request-password-reset/', RequestPasswordResetView.as_view(), name="request-password-reset"),
 
     # Password reset confirmation URL (under api/accounts/)
@@ -29,14 +41,19 @@ urlpatterns = [
     path("auth/password/reset/confirm/", UserViewSet.as_view({'post': 'reset_password_confirm'})),
 
     # Budget allocation URLs
-    path("budgets/", BudgetListView.as_view(), name="budget-list"),  # GET only
-    path('budget/', BudgetCreateView.as_view(), name='budget-create'),  # Create budget allocation
-    path('budget/update/', BudgetUpdateView.as_view(), name='budget-update'),  # Update budget for authenticated user
-    path('budget/delete/', BudgetDeleteView.as_view(), name='budget-delete'),  # Delete budget for authenticated user
-    path('budget/update/', BudgetUpdateView.as_view(), name='budget-update'),
-    path('budget/<int:id>/', BudgetDetailView.as_view(), name='budget-detail'),  # Fetch budget by ID
-    path('budget/<int:id>/update/', BudgetUpdateView.as_view(), name='budget-update'),  #
-    path('budget/<int:id>/detail/', BudgetDetailView.as_view(), name='budget-detail'),  # Include id in the URL
-    path('budget/<int:id>/delete/', BudgetDeleteView.as_view(), name='budget-delete'),
+        # Admin Budget URLs
+    path('admin/budgets/', AdminBudgetListView.as_view(), name='admin-budget-list'),
+    path('admin/budgets/create/', AdminBudgetCreateView.as_view(), name='admin-budget-create'),
+    path('admin/budgets/<int:id>/', AdminBudgetDetailView.as_view(), name='admin-budget-detail'),
+    path('admin/budgets/<int:id>/update/', AdminBudgetUpdateView.as_view(), name='admin-budget-update'),
+    path('admin/budgets/<int:id>/delete/', AdminBudgetDeleteView.as_view(), name='admin-budget-delete'),
+    
+    # Manager Budget URLs
+    path('manager/budgets/', ManagerBudgetListView.as_view(), name='manager-budget-list'),
+    path('manager/budgets/create/', ManagerBudgetCreateView.as_view(), name='manager-budget-create'),
+    path('manager/budgets/remaining/', ManagerBudgetRemainingView.as_view(), name='manager-budget-remaining'),
 
 ]
+
+         
+

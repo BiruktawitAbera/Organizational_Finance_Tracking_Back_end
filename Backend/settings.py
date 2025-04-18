@@ -1,27 +1,26 @@
 from pathlib import Path
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
+
+
 SECRET_KEY = 'django-insecure-a&!t159&x^g@at16%6th@m%c9w=s@y73g(a62^^u4*xdg7#(os'
 
-# SECURITY WARNING: don't run with debug turned on in production!
+
 DEBUG = True
 
 ALLOWED_HOSTS = []
 
-# CSRF Settings for Local Development
+
 CSRF_TRUSTED_ORIGINS = [
-    "http://127.0.0.1:8000",  # Add your localhost URLs here
+    "http://127.0.0.1:8000",  
     "http://localhost:8000",
 ]
 
-# Application definition
+
 
 INSTALLED_APPS = [
     # Default Django apps
@@ -31,7 +30,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django.contrib.sites',  # Required for django-allauth (Only keep ONE occurrence)
+    'django.contrib.sites',  
 
     # Third-party apps
     'rest_framework',  # For API
@@ -47,6 +46,7 @@ INSTALLED_APPS = [
 
     # Your custom apps
     'accounts',  # Ensure your app is included
+     
 ]
 SITE_ID = 1
 MIDDLEWARE = [
@@ -89,11 +89,17 @@ WSGI_APPLICATION = 'Backend.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'finance_tracking',                       
+        'USER': 'root',
+        'PASSWORD': '1234',
+        'HOST': 'localhost',  # Change if using a remote DB
+        'PORT': '3306',       # Default MySQL port
+        'OPTIONS': {
+            'charset': 'utf8mb4',  # Supports full Unicode
+        },
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
@@ -117,6 +123,8 @@ AUTH_PASSWORD_VALIDATORS = [
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -134,6 +142,8 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 
 USE_TZ = True
+
+SILENCED_SYSTEM_CHECKS = ["models.W036"]
 
 
 # Static files (CSS, JavaScript, Images)

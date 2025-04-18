@@ -1,17 +1,20 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager, Permission
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.db import models
+from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 
-
+ 
 class CustomUserManager(BaseUserManager):
     """Custom user manager that allows email-based authentication."""
-
     def create_user(self, email, password=None, **extra_fields):
         """Create and return a regular user with the given email and password."""
         if not email:
             raise ValueError("Email is required")
         email = self.normalize_email(email)
-        extra_fields.setdefault('role', 'department_head')  # Default role
+        extra_fields.setdefault('role', 'department_head')
         user = self.model(email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
@@ -23,13 +26,19 @@ class CustomUserManager(BaseUserManager):
         extra_fields.setdefault('is_superuser', True)
         return self.create_user(email, password, **extra_fields)
 
-
 class Role(models.Model):
-    """Role model for defining user roles and linking them to permissions."""
+    """Role model for defining user roles."""
     ROLE_CHOICES = [
         ('admin', 'Admin'),
         ('manager', 'Manager'),
         ('department_head', 'Department Head'),
+    ]
+
+    DEPARTMENT_CHOICES = [
+        ('HR', 'Human Resources'),
+        ('OPS', 'Operations'), 
+        ('IT', 'Information Technology'),
+        ('SALES', 'Sales & Revenue'),
     ]
 
     name = models.CharField(max_length=20, choices=ROLE_CHOICES, unique=True)
@@ -37,35 +46,45 @@ class Role(models.Model):
     def __str__(self):
         return self.get_name_display()
 
-
 class CustomUser(AbstractUser):
-    """Custom user model with role-based access control (RBAC)."""
-    
+    """Custom user model with RBAC."""
     email = models.EmailField(unique=True)
     role = models.CharField(max_length=20, choices=Role.ROLE_CHOICES, default='department_head')
     department = models.CharField(max_length=255, blank=True, null=True)
     salary = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    has_changed_password = models.BooleanField(default=False)  # Ensure password change enforcement
+    has_changed_password = models.BooleanField(default=False)
+    organization_budget = models.DecimalField(
+        max_digits=15, 
+        decimal_places=2, 
+        default=0,
+        help_text="Total organization budget capacity"
+    )
 
-    # User Manager
     objects = CustomUserManager()
 
-    USERNAME_FIELD = 'email'  # Email is the primary authentication field
-    REQUIRED_FIELDS = ['username']  # Username is required but not used for login
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username']
 
     def __str__(self):
         return f"{self.email} ({self.role})"
 
     def save(self, *args, **kwargs):
-        """Override the save method to enforce department logic based on role."""
+        """Enforce department logic based on role."""
+        # Admin shouldn't have a department
         if self.role == 'admin' and self.department:
-            self.department = None  # Admin should not have a department
-        elif self.role in ['manager', 'department_head'] and not self.department:
-            raise ValidationError("Department is required for managers and department heads.")
+            self.department = None
+        
+        # Department heads must have a department
+        elif self.role == 'department_head' and not self.department:
+            raise ValidationError("Department is required for department heads.")
+        
+        # Managers shouldn't have a department
+        elif self.role == 'manager' and self.department:
+            self.department = None
+            
         super().save(*args, **kwargs)
 
     def has_permission(self, permission_codename):
-        """Check if the user has a specific permission."""
         return self.groups.filter(permissions__codename=permission_codename).exists()
 
     def is_admin(self):
@@ -87,47 +106,97 @@ class CustomUser(AbstractUser):
             ("view_reports", "Can view financial reports"),
         ]
 
-
 User = CustomUser
 
-
-class Budget(models.Model):
-    DEPARTMENT_CHOICES = [
-        ('income', 'Income Breakdown'),
-        ('savings', 'Savings & Investments'),
-        ('fixed_expenses', 'Fixed Expenses'),
-        ('variable_expenses', 'Variable Expenses'),
+class AdminBudget(models.Model):
+    BUDGET_LEVEL_CHOICES = [
+        ('organization', 'Organization Budget'),
+        ('department', 'Department Budget'),
     ]
-    department = models.CharField(max_length=50, choices=DEPARTMENT_CHOICES)
-    allocated_amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    budget_level = models.CharField(max_length=20, choices=BUDGET_LEVEL_CHOICES)
+    allocated_amount = models.DecimalField(max_digits=15, decimal_places=2)
     allocated_by = models.ForeignKey(
-        User, related_name="allocated_budgets", on_delete=models.CASCADE,
-        limit_choices_to={'role': 'manager'}
-    )  # Only Managers can allocate budgets
-
+        User,
+        related_name='admin_allocations_made',
+        on_delete=models.CASCADE,
+        limit_choices_to={'role__in': ['admin']}
+    )
     allocated_to = models.ForeignKey(
-        User, related_name="received_budgets", on_delete=models.CASCADE,
-        limit_choices_to={'role': 'department_head'}
-    )  # Only Department Heads receive budgets
-
+        User,
+        related_name='admin_allocations_received',
+        on_delete=models.CASCADE,
+        limit_choices_to={'role__in': ['manager', 'department_head']}
+    )
     allocated_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        unique_together = ['department', 'allocated_by', 'allocated_to']  # Ensures one budget allocation per department
-
-    def save(self, *args, **kwargs):
-        """Ensure Managers allocate budgets to department heads in their own department."""
-        if self.allocated_by.role != 'manager':
-            raise ValidationError("Only managers can allocate budgets.")
-        
-        if self.allocated_to.role != 'department_head':
-            raise ValidationError("Budgets can only be allocated to department heads.")
-        
-        if self.allocated_by.department != self.department or self.allocated_to.department != self.department:
-            raise ValidationError("Manager and Department Head must belong to the same department.")
-
-        super().save(*args, **kwargs)
+    created_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Budget for {self.get_department_display()} (£{self.allocated_amount}) by {self.allocated_by.email} to {self.allocated_to.email}"
+        return f"{self.get_budget_level_display()}: {self.allocated_amount}"
+    
+
+class ManagerBudget(models.Model):
+    BUDGET_LEVEL_CHOICES = [
+        ('organization', 'Organization Level'),
+        ('department', 'Department Level'),
+    ]
+    
+    DEPARTMENT_CHOICES = [
+        ('HR', 'Human Resources'),
+        ('OPS', 'Operations'),
+        ('IT', 'IT & Systems Management'),
+        ('SALES', 'Sales and Revenue Management'),
+    ]
+    
+    allocated_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='manager_allocations_made',
+        verbose_name='Allocated By',
+        limit_choices_to={'role__in': ['manager']}
+    )
+    allocated_to = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='manager_allocations_received',
+        verbose_name='Allocated To',
+        limit_choices_to={'role__in': ['department_head']}
+    )
+    amount = models.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        validators=[MinValueValidator(0)]
+    )
+    budget_level = models.CharField(
+        max_length=20,
+        choices=BUDGET_LEVEL_CHOICES
+    )
+    department = models.CharField(
+        max_length=20,
+        choices=DEPARTMENT_CHOICES,
+        blank=True,
+        null=True
+    )
+    fiscal_year = models.CharField(max_length=10)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Manager Budget Allocation'
+        verbose_name_plural = 'Manager Budget Allocations'
+    
+    def __str__(self):
+        return f"{self.allocated_by} → {self.allocated_to}: {self.amount} ({self.budget_level})"
+    
+    def clean(self):
+        if self.budget_level == 'department' and not self.department:
+            raise ValidationError("Department must be specified for department-level budgets")
+        if self.budget_level == 'organization' and self.department:
+            raise ValidationError("Organization-level budgets cannot have a department")
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
