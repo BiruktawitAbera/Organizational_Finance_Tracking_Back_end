@@ -47,6 +47,14 @@ urlpatterns = [
     path('admin/budgets/<int:id>/', AdminBudgetDetailView.as_view(), name='admin-budget-detail'),
     path('admin/budgets/<int:id>/update/', AdminBudgetUpdateView.as_view(), name='admin-budget-update'),
     path('admin/budgets/<int:id>/delete/', AdminBudgetDeleteView.as_view(), name='admin-budget-delete'),
+
+    # CRUD FOR ADMIN
+    path('admin/budgets/<int:pk>/update/', AdminBudgetUpdateView.as_view(), name='admin-budget-update'),
+    path(
+        'admin/budgets/<int:pk>/delete/',
+        AdminBudgetDeleteView.as_view(),
+        name='admin-budget-delete'
+    ),
     
     # Manager Budget URLs
     path('manager/budgets/', ManagerBudgetListView.as_view(), name='manager-budget-list'),

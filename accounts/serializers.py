@@ -117,8 +117,15 @@ class UserSerializer(serializers.ModelSerializer):
 class AdminBudgetSerializer(serializers.ModelSerializer):
     allocated_by = serializers.ReadOnlyField(source='allocated_by.email')
     allocated_to = serializers.ReadOnlyField(source='allocated_to.email')
-    allocated_to_email = serializers.EmailField(write_only=True)
-    budget_level = serializers.ChoiceField(choices=AdminBudget.BUDGET_LEVEL_CHOICES)
+    allocated_to_email = serializers.EmailField(
+        write_only=True,
+        required=False,  # Not required for updates
+        allow_null=True  # Allow null for partial updates
+    )
+    budget_level = serializers.ChoiceField(
+        choices=AdminBudget.BUDGET_LEVEL_CHOICES,
+        required=False  # Not required for updates
+    )
 
     class Meta:
         model = AdminBudget
@@ -133,39 +140,73 @@ class AdminBudgetSerializer(serializers.ModelSerializer):
             'updated_at',
             'created_at'
         ]
-        read_only_fields = ["allocated_by", "allocated_at", "allocated_to"]
+        read_only_fields = [
+            'id',
+            'allocated_by', 
+            'allocated_at',
+            'allocated_to',  # Will be set during creation only
+            'created_at'
+        ]
 
     def validate(self, data):
         request = self.context.get('request')
+        if not request or not hasattr(request, 'user'):
+            raise serializers.ValidationError("Authentication required")
 
-        if not request or not hasattr(request, 'user') or not request.user.is_authenticated:
-            raise serializers.ValidationError("User must be authenticated to allocate a budget.")
+        # Skip allocation validation for updates
+        if self.instance is not None:
+            return data
 
+        # For creation, require allocated_to_email
         allocated_to_email = data.pop('allocated_to_email', None)
-        budget_level = data.get('budget_level')
+        if not allocated_to_email:
+            raise serializers.ValidationError({
+                "allocated_to_email": "This field is required when creating a budget"
+            })
 
-        # Get allocated_to user
         try:
             allocated_to = User.objects.get(email=allocated_to_email)
         except User.DoesNotExist:
-            raise serializers.ValidationError({"allocated_to_email": "User with this email does not exist."})
+            raise serializers.ValidationError({
+                "allocated_to_email": "User with this email does not exist."
+            })
+
+        budget_level = data.get('budget_level')
+        if not budget_level:
+            raise serializers.ValidationError({
+                "budget_level": "This field is required when creating a budget"
+            })
 
         # Validate allocation hierarchy
         if budget_level == 'organization':
             if not request.user.is_admin():
-                raise serializers.ValidationError("Only admins can allocate organization budgets.")
+                raise serializers.ValidationError(
+                    "Only admins can allocate organization budgets."
+                )
             if not allocated_to.is_manager():
-                raise serializers.ValidationError("Organization budgets must be allocated to managers.")
-
+                raise serializers.ValidationError(
+                    "Organization budgets must be allocated to managers."
+                )
         elif budget_level == 'department':
             if not request.user.is_admin():
-                raise serializers.ValidationError("Only admins can allocate department budgets.")
+                raise serializers.ValidationError(
+                    "Only admins can allocate department budgets."
+                )
             if not allocated_to.is_department_head():
-                raise serializers.ValidationError("Department budgets must be allocated to department heads.")
+                raise serializers.ValidationError(
+                    "Department budgets must be allocated to department heads."
+                )
 
-        # Add validated data
         data['allocated_to'] = allocated_to
         return data
+
+    def update(self, instance, validated_data):
+        # Remove fields that shouldn't be updated
+        validated_data.pop('allocated_to_email', None)
+        validated_data.pop('allocated_to', None)
+        validated_data.pop('budget_level', None)
+        
+        return super().update(instance, validated_data)
 
     def create(self, validated_data):
         request = self.context.get('request')
@@ -195,6 +236,7 @@ class ManagerBudgetSerializer(serializers.ModelSerializer):
             'notes'
         ]
         read_only_fields = [
+            'id',
             'allocated_by',
             'created_at',
             'updated_at'

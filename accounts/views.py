@@ -330,6 +330,178 @@ class AdminBudgetDeleteView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+# CRUD for admin
+
+class AdminBudgetUpdateView(APIView):
+    """
+    Bulletproof budget update endpoint with:
+    - Complete error handling
+    - Multiple PK extraction methods
+    - Comprehensive validation
+    - Detailed logging
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def extract_budget_id(self, request, kwargs):
+        """Safely extract budget ID from all possible sources"""
+        try:
+            # Check all possible parameter locations
+            possible_sources = [
+                kwargs.get('pk'),
+                kwargs.get('id'),
+                getattr(request.resolver_match, 'kwargs', {}).get('pk'),
+                request.GET.get('pk'),
+                request.data.get('id'),
+                request.data.get('pk'),
+                request.path.strip('/').split('/')[-2]  # Fallback from URL path
+            ]
+            
+            # Find first valid integer value
+            for source in possible_sources:
+                try:
+                    if source is not None:
+                        return int(source)
+                except (ValueError, TypeError):
+                    continue
+            
+            logger.error(f"Budget ID extraction failed. Sources: {possible_sources}")
+            return None
+            
+        except Exception as e:
+            logger.exception("Budget ID extraction crashed")
+            return None
+
+    def validate_update_data(self, budget, data):
+        """Validate all update parameters"""
+        errors = {}
+        
+        # Budget level validation
+        if 'budget_level' in data and data['budget_level'] != budget.budget_level:
+            errors['budget_level'] = "Cannot change budget level after creation"
+        
+        # Amount validation
+        if 'allocated_amount' in data:
+            try:
+                new_amount = float(data['allocated_amount'])
+                
+                if budget.budget_level == 'organization':
+                    total_allocated = ManagerBudget.objects.filter(
+                        allocated_to=budget.allocated_to
+                    ).aggregate(total=Sum('amount'))['total'] or 0
+                    
+                    if new_amount < float(total_allocated):
+                        errors['allocated_amount'] = (
+                            f"Cannot reduce below allocated amount: {total_allocated}"
+                        )
+            except (ValueError, TypeError):
+                errors['allocated_amount'] = "Must be a valid number"
+        
+        return errors
+
+    def put(self, request, *args, **kwargs):
+        """Handle PUT requests with comprehensive error handling"""
+        try:
+            # ===== STEP 1: Extract and validate budget ID =====
+            budget_id = self.extract_budget_id(request, kwargs)
+            if not budget_id:
+                return Response(
+                    {"error": "Could not determine budget ID from URL"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            logger.info(f"Attempting update for budget ID: {budget_id}")
+            
+            # ===== STEP 2: Retrieve budget instance =====
+            try:
+                budget = AdminBudget.objects.get(pk=budget_id)
+            except AdminBudget.DoesNotExist:
+                return Response(
+                    {"error": "Budget not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # ===== STEP 3: Authorization check =====
+            if budget.allocated_by != request.user or not request.user.is_admin():
+                return Response(
+                    {"error": "Only the allocating admin can update this budget"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # ===== STEP 4: Data validation =====
+            data = request.data.copy()
+            validation_errors = self.validate_update_data(budget, data)
+            
+            if validation_errors:
+                return Response(
+                    {"errors": validation_errors},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ===== STEP 5: Serialization and save =====
+            serializer = AdminBudgetSerializer(
+                budget,
+                data=data,
+                partial=True,
+                context={'request': request}
+            )
+            
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            serializer.save()
+            logger.info(f"Successfully updated budget ID: {budget_id}")
+            return Response(serializer.data)
+
+        except Exception as e:
+            logger.exception("Unexpected error in budget update")
+            return Response(
+                {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+class AdminBudgetDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, id):
+        try:
+            budget = AdminBudget.objects.get(id=id)
+            
+            # Authorization - Only admin who created can delete
+            if budget.allocated_by != request.user or not request.user.is_admin():
+                return Response(
+                    {"error": "Only the admin who allocated this budget can delete it"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Prevent deletion if budget has been partially allocated
+            if budget.budget_level == 'organization':
+                total_allocated = ManagerBudget.objects.filter(
+                    allocated_to=budget.allocated_to
+                ).aggregate(total=Sum('amount'))['total'] or 0
+                
+                if float(total_allocated) > 0:
+                    return Response(
+                        {
+                            "error": "Cannot delete organization budget with existing allocations",
+                            "allocated_amount": total_allocated
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            budget.delete()
+            return Response(
+                {"message": "Admin budget allocation deleted successfully"},
+                status=status.HTTP_204_NO_CONTENT
+            )
+
+        except AdminBudget.DoesNotExist:
+            return Response(
+                {"error": "Admin budget not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
 # Manager Budget Views
 class ManagerBudgetListView(generics.ListAPIView):
     serializer_class = ManagerBudgetSerializer
