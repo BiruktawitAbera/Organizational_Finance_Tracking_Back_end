@@ -584,3 +584,219 @@ class ManagerBudgetRemainingView(generics.GenericAPIView):
             'allocated_amount': total_allocated,
             'remaining_amount': remaining,
         })
+    
+class ManagerBudgetUpdateView(APIView):
+    """
+    Secure manager budget update endpoint with:
+    - Comprehensive error handling
+    - Strict permission checks
+    - Budget validation
+    - Detailed logging
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def extract_budget_id(self, request, kwargs):
+        """Safely extract budget ID from all possible sources"""
+        try:
+            # Check all possible parameter locations
+            possible_sources = [
+                kwargs.get('pk'),
+                kwargs.get('id'),
+                request.GET.get('pk'),
+                request.data.get('id'),
+                request.data.get('pk'),
+                request.path.strip('/').split('/')[-1]  # Fallback from URL path
+            ]
+            
+            # Find first valid integer value
+            for source in possible_sources:
+                try:
+                    if source is not None:
+                        return int(source)
+                except (ValueError, TypeError):
+                    continue
+            
+            logger.error(f"Budget ID extraction failed. Sources: {possible_sources}")
+            return None
+            
+        except Exception as e:
+            logger.exception("Budget ID extraction crashed")
+            return None
+
+    def validate_update_data(self, budget, data, request):
+        """Validate all update parameters for manager budget"""
+        errors = {}
+        
+        # Budget level validation
+        if 'budget_level' in data and data['budget_level'] != budget.budget_level:
+            errors['budget_level'] = "Cannot change budget level after creation"
+        
+        # Amount validation
+        if 'amount' in data:
+            try:
+                new_amount = float(data['amount'])
+                old_amount = float(budget.amount)
+                amount_difference = new_amount - old_amount
+                
+                # Only check if increasing the amount
+                if amount_difference > 0:
+                    # Get remaining budget from admin allocation
+                    admin_budget = AdminBudget.objects.filter(
+                        allocated_to=request.user,
+                        budget_level='organization'
+                    ).first()
+                    
+                    if admin_budget:
+                        total_allocated = ManagerBudget.objects.filter(
+                            allocated_by=request.user
+                        ).exclude(id=budget.id).aggregate(total=Sum('amount'))['total'] or 0
+                        
+                        remaining = float(admin_budget.allocated_amount) - float(total_allocated)
+                        
+                        if amount_difference > remaining:
+                            errors['amount'] = (
+                                f"Update would exceed remaining budget by {amount_difference - remaining}. "
+                                f"Only {remaining} available."
+                            )
+            except (ValueError, TypeError):
+                errors['amount'] = "Must be a valid number"
+        
+        # Department validation for department-level budgets
+        if budget.budget_level == 'department' and 'department' in data:
+            if not data['department']:
+                errors['department'] = "Department must be specified for department-level budgets"
+        
+        return errors
+
+    def put(self, request, *args, **kwargs):
+        """Handle PUT requests with comprehensive error handling"""
+        try:
+            # ===== STEP 1: Extract and validate budget ID =====
+            budget_id = self.extract_budget_id(request, kwargs)
+            if not budget_id:
+                return Response(
+                    {"error": "Could not determine budget ID from URL"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            logger.info(f"Attempting manager budget update for ID: {budget_id}")
+            
+            # ===== STEP 2: Retrieve budget instance =====
+            try:
+                budget = ManagerBudget.objects.get(pk=budget_id)
+            except ManagerBudget.DoesNotExist:
+                return Response(
+                    {"error": "Manager budget not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # ===== STEP 3: Authorization check =====
+            if budget.allocated_by != request.user or not request.user.is_manager():
+                return Response(
+                    {"error": "Only the allocating manager can update this budget"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # ===== STEP 4: Data validation =====
+            data = request.data.copy()
+            validation_errors = self.validate_update_data(budget, data, request)
+            
+            if validation_errors:
+                return Response(
+                    {"errors": validation_errors},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Handle allocated_to_email if provided
+            if 'allocated_to_email' in data:
+                try:
+                    allocated_to = User.objects.get(email=data['allocated_to_email'])
+                    if budget.budget_level == 'department' and not allocated_to.is_department_head():
+                        return Response(
+                            {"error": "Department budgets must be allocated to department heads"},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    data['allocated_to'] = allocated_to.id
+                except User.DoesNotExist:
+                    return Response(
+                        {"allocated_to_email": "User with this email does not exist"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            # ===== STEP 5: Serialization and save =====
+            serializer = ManagerBudgetSerializer(
+                budget,
+                data=data,
+                partial=True,
+                context={'request': request}
+            )
+            
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            serializer.save()
+            logger.info(f"Successfully updated manager budget ID: {budget_id}")
+            return Response(serializer.data)
+
+        except Exception as e:
+            logger.exception("Unexpected error in manager budget update")
+            return Response(
+                {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ManagerBudgetDeleteView(APIView):
+    """
+    Secure manager budget deletion endpoint with:
+    - Permission checks
+    - Validation of dependencies
+    - Detailed logging
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, *args, **kwargs):
+        try:
+            # ===== STEP 1: Extract budget ID =====
+            budget_id = kwargs.get('pk') or kwargs.get('id')
+            if not budget_id:
+                return Response(
+                    {"error": "Budget ID not provided"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            logger.info(f"Attempting to delete manager budget ID: {budget_id}")
+            
+            # ===== STEP 2: Retrieve budget instance =====
+            try:
+                budget = ManagerBudget.objects.get(pk=budget_id)
+            except ManagerBudget.DoesNotExist:
+                return Response(
+                    {"error": "Manager budget not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # ===== STEP 3: Authorization check =====
+            if budget.allocated_by != request.user or not request.user.is_manager():
+                return Response(
+                    {"error": "Only the allocating manager can delete this budget"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # ===== STEP 4: Perform deletion =====
+            budget.delete()
+            logger.info(f"Successfully deleted manager budget ID: {budget_id}")
+            return Response(
+                {"message": "Manager budget allocation deleted successfully"},
+                status=status.HTTP_204_NO_CONTENT
+            )
+
+        except Exception as e:
+            logger.exception("Unexpected error in manager budget deletion")
+            return Response(
+                {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

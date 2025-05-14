@@ -23,7 +23,10 @@ from .views import (
     UserListView,
     ManagerBudgetListView,
     ManagerBudgetCreateView,
-    ManagerBudgetRemainingView
+    ManagerBudgetRemainingView,
+    ManagerBudgetUpdateView,
+    ManagerBudgetDeleteView
+
 )
 
 urlpatterns = [
@@ -58,8 +61,10 @@ urlpatterns = [
     
     # Manager Budget URLs
     path('manager/budgets/', ManagerBudgetListView.as_view(), name='manager-budget-list'),
-    path('manager/budgets/create/', ManagerBudgetCreateView.as_view(), name='manager-budget-create'),
-    path('manager/budgets/remaining/', ManagerBudgetRemainingView.as_view(), name='manager-budget-remaining'),
+    path('api/manager/budgets/create/', ManagerBudgetCreateView.as_view(), name='manager-budget-create'),
+    path('api/manager/budgets/remaining/', ManagerBudgetRemainingView.as_view(), name='manager-budget-remaining'),
+    path('manager/budgets/<int:pk>/update/', ManagerBudgetUpdateView.as_view(), name='manager-budget-update'),
+    path('api/manager/budgets/<int:pk>/delete/', ManagerBudgetDeleteView.as_view(), name='manager-budget-delete'),
 
 ]
 
