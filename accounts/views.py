@@ -15,13 +15,15 @@ from rest_framework.permissions import AllowAny
 from rest_framework import status, generics
 from rest_framework.response import Response
 from .serializers import PasswordResetSerializer
+from rest_framework import serializers, viewsets, status, mixins
+from rest_framework.decorators import action
 
 from .models import  User
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from .models import CustomUser
 import logging
-from django.db.models import Q , Sum
+from django.db.models import Q , Sum , Count
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -34,6 +36,18 @@ from .serializers import (
     PasswordResetSerializer,
     PasswordResetConfirmSerializer,
 
+)
+from django.utils import timezone
+from datetime import timedelta
+from .models import (
+    User, 
+)
+
+from .models import Income
+from .serializers import IncomeSerializer
+from .permissions import (
+    CanCreateIncome, CanVerifyIncome, IsDepartmentHead, 
+    IsManager, IsAdmin, CanViewAllIncomes
 )
 
 # Get user model
@@ -800,3 +814,108 @@ class ManagerBudgetDeleteView(APIView):
                 {"error": "Internal server error"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+# income and expense tracking
+
+class IncomeCreateView(generics.CreateAPIView):
+    serializer_class = IncomeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if not user.is_department_head:
+            raise permissions.PermissionDenied(
+                "Only department heads can create income records"
+            )
+        serializer.save(
+            created_by=user,
+            department=user.department  # Set department from user's department
+        )
+
+class IncomeListView(generics.ListAPIView):
+    serializer_class = IncomeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        department = self.request.query_params.get('department', None)
+        
+        queryset = Income.objects.all()
+        
+        if user.is_department_head:
+            queryset = queryset.filter(department=user.department)
+        elif not (user.is_manager or user.is_superuser):
+            queryset = queryset.none()
+        
+        if department and (user.is_manager or user.is_superuser):
+            queryset = queryset.filter(department=department)
+            
+        return queryset
+
+class DepartmentIncomeListView(generics.ListAPIView):
+    serializer_class = IncomeSerializer
+    permission_classes = [permissions.IsAuthenticated, IsDepartmentHead | IsManager | IsAdmin]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_department_head:
+            return Income.objects.filter(department=user.department)
+        return Income.objects.all()
+
+class IncomeDetailView(generics.RetrieveAPIView):
+    queryset = Income.objects.all()
+    serializer_class = IncomeSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser or user.is_manager:
+            return Income.objects.all()
+        if user.is_department_head:
+            return Income.objects.filter(department=user.department)
+        return Income.objects.none()
+
+class IncomeSummaryView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsManager | IsAdmin]
+    
+    def get(self, request):
+        queryset = Income.objects.all()
+        
+        department_summary = queryset.values('department').annotate(
+            total_amount=Sum('amount'),
+            count=Count('id')  # Removed "models." prefix here
+        ).order_by('department')
+
+        total_income = queryset.aggregate(total=Sum('amount'))['total'] or 0
+
+        return Response({
+            'department_summary': department_summary,
+            'total_income': total_income
+        })
+class DepartmentIncomeSummaryView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsDepartmentHead]
+
+    def get(self, request):
+        user = request.user
+        queryset = Income.objects.filter(department=user.department)
+        
+        summary = queryset.aggregate(
+            total_amount=Sum('amount'),
+            total_records=Count('id')
+        )
+
+        return Response({
+            'department': user.department,
+            'total_amount': summary['total_amount'] or 0,
+            'total_records': summary['total_records'] or 0
+        })
+    
+class AdminIncomeHistoryView(generics.ListAPIView):
+    serializer_class = IncomeSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdmin | IsManager]
+    filterset_fields = ['department']
+    search_fields = ['description']
+    ordering_fields = ['date', 'amount', 'created_at']
+
+    def get_queryset(self):
+        return Income.objects.all()

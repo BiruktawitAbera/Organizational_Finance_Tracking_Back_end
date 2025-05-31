@@ -1,12 +1,30 @@
+from django.db.models import Sum
+from django.core.validators import MinValueValidator
 from django.contrib.auth.models import AbstractUser, BaseUserManager, Permission
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.utils import timezone
+from datetime import timedelta
 
- 
+DEPARTMENT_CHOICES = [
+        ('HR', 'Human Resources'),
+        ('OPS', 'Operations'), 
+        ('IT', 'Information Technology'),
+        ('SALES', 'Sales & Revenue Management'),
+    ]
+
+INCOME_STATUS_CHOICES = [
+    ('PENDING', 'Pending'),
+    ('APPROVED', 'Approved'),
+    ('DISAPPROVED', 'Disapproved'),
+    ] 
+
+
+
+
 class CustomUserManager(BaseUserManager):
     """Custom user manager that allows email-based authentication."""
     def create_user(self, email, password=None, **extra_fields):
@@ -34,12 +52,7 @@ class Role(models.Model):
         ('department_head', 'Department Head'),
     ]
 
-    DEPARTMENT_CHOICES = [
-        ('HR', 'Human Resources'),
-        ('OPS', 'Operations'), 
-        ('IT', 'Information Technology'),
-        ('SALES', 'Sales & Revenue'),
-    ]
+
 
     name = models.CharField(max_length=20, choices=ROLE_CHOICES, unique=True)
 
@@ -200,3 +213,32 @@ class ManagerBudget(models.Model):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
+
+    # income a
+
+class Income(models.Model):
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(0.01)]
+    )
+    date = models.DateField()
+    description = models.TextField(max_length=500)
+    department = models.CharField(
+        max_length=30,
+        choices=DEPARTMENT_CHOICES,
+        editable=False
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='created_incomes'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date']
+
+    def __str__(self):
+        return f"{self.amount} ({self.date}) - {self.department}"

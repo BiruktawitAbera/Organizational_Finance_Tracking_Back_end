@@ -1,3 +1,5 @@
+from django.db import models
+from django.db.models import Sum  # Add this import at the top
 from django.core.mail import send_mail
 from django.utils.crypto import get_random_string
 from django.contrib.auth.tokens import default_token_generator
@@ -9,8 +11,14 @@ from decimal import Decimal
 from django.conf import settings
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import  AdminBudget, ManagerBudget , User
-from django.db.models import Sum  # Add this import at the top
+
 from .models import AdminBudget, ManagerBudget
+from .models import (
+    User,  AdminBudget, ManagerBudget
+)
+
+from .models import Income, DEPARTMENT_CHOICES
+
 
 
 User = get_user_model()
@@ -290,3 +298,18 @@ class ManagerBudgetSerializer(serializers.ModelSerializer):
         validated_data.pop('allocated_to_email', None)
         validated_data['allocated_by'] = self.context['request'].user
         return super().create(validated_data)
+    
+#  serializer for income 
+
+class IncomeSerializer(serializers.ModelSerializer):
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
+    department = serializers.CharField(read_only=True)
+    created_by = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = Income
+        fields = [
+            'id', 'amount', 'date', 'description', 'department',
+            'created_by', 'created_at', 'updated_at'
+        ]

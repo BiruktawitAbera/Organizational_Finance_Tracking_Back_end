@@ -1,6 +1,8 @@
 # accounts/urls.py
 from django.urls import path, include
 from djoser.views import UserViewSet
+from rest_framework.routers import DefaultRouter
+
 from .views import (
     RegisterAccountsView, 
     UserRoleView, 
@@ -25,9 +27,21 @@ from .views import (
     ManagerBudgetCreateView,
     ManagerBudgetRemainingView,
     ManagerBudgetUpdateView,
-    ManagerBudgetDeleteView
+    ManagerBudgetDeleteView,
+
+        # New views for income and expense
+    IncomeCreateView,
+    IncomeListView,
+    DepartmentIncomeListView,
+    IncomeDetailView,
+    IncomeSummaryView,
+    AdminIncomeHistoryView,
+    DepartmentIncomeSummaryView,
+
 
 )
+
+
 
 urlpatterns = [
     path('register/', RegisterAccountsView.as_view(), name='register'),
@@ -66,7 +80,31 @@ urlpatterns = [
     path('manager/budgets/<int:pk>/update/', ManagerBudgetUpdateView.as_view(), name='manager-budget-update'),
     path('api/manager/budgets/<int:pk>/delete/', ManagerBudgetDeleteView.as_view(), name='manager-budget-delete'),
 
-]
+        # Income Management URLs
+    
+    path('incomes/', IncomeCreateView.as_view(), name='income-create'),
+    # List all incomes (Admin/Manager) or department-specific (Department Head)
+    path('income-list/', IncomeListView.as_view(), name='income-list'),
+    
+    # Department-specific incomes (Department Head + Admin/Manager)
+    path('incomes/department/', DepartmentIncomeListView.as_view(), name='department-incomes'),
+    
+    # Income detail view
+    path('incomes/<int:pk>/', IncomeDetailView.as_view(), name='income-detail'),
+    
+    # Full summary (Admin/Manager) or department summary (Department Head)
+    path('incomes/summary/', IncomeSummaryView.as_view(), name='income-summary'),
+    
+    # Department-specific summary (Department Head only)
+    path('incomes/department-summary/', DepartmentIncomeSummaryView.as_view(), name='department-income-summary'),
+    
+    # Full history with filters (Admin/Manager only)
+    path('incomes/history/', AdminIncomeHistoryView.as_view(), name='income-history'),
+    
+
+
+
+] 
 
          
 

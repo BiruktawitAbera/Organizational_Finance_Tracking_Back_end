@@ -92,7 +92,7 @@ WSGI_APPLICATION = 'Backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'finance_tracking',                       
+        'NAME': 'finance_tracking_new',                       
         'USER': 'root',
         'PASSWORD': '1234',
         'HOST': 'localhost',  # Change if using a remote DB

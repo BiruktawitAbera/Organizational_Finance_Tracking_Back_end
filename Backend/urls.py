@@ -30,5 +30,14 @@ urlpatterns = [
     path('api/accounts/request-password-reset/', RequestPasswordResetView.as_view(), name='request-password-reset'),
     path('api/accounts/reset-password/<uidb64>/<token>/', PasswordResetConfirmView.as_view(), name='reset-password-confirm'),
 
+        # API URLs for finance management
+    path('api/finance/', include([
+        path('incomes/', include('accounts.urls')),  # All income URLs
+        path('expenses/', include('accounts.urls')),  # All expense URLs
+        path('reports/', include('accounts.urls')),   # All report URLs
+        path('alerts/', include('accounts.urls')),    # All alert URLs
+        path('dashboard/', include('accounts.urls')), # All dashboard URLs
+    ])),
+
 ]
 
