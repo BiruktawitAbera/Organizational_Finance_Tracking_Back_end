@@ -18,6 +18,7 @@ from .models import (
 )
 
 from .models import Income, DEPARTMENT_CHOICES
+from .models import Expense
 
 
 
@@ -313,3 +314,38 @@ class IncomeSerializer(serializers.ModelSerializer):
             'id', 'amount', 'date', 'description', 'department',
             'created_by', 'created_at', 'updated_at'
         ]
+
+# expense
+class ExpenseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Expense
+        fields = '__all__'
+        read_only_fields = [ 'department_head', 'manager', 'created_at', 'updated_at']
+
+class ExpenseUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Expense
+        fields = ['status']  # Only allow status updates
+
+class ExpenseDetailSerializer(serializers.ModelSerializer):
+    department_head_name = serializers.CharField(source='department_head.full_name', read_only=True)
+    manager_name = serializers.CharField(source='manager.full_name', read_only=True)
+
+    class Meta:
+        model = Expense
+        fields = [
+            'id', 'amount', 'description', 'status',
+            'department_head', 'department_head_name',
+            'manager', 'manager_name', 'created_at', 'updated_at'
+        ]
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        user = self.context['request'].user
+        
+        # Hide sensitive fields from department heads
+        if user.is_department_head():
+            representation.pop('manager', None)
+            representation.pop('manager_name', None)
+        
+        return representation

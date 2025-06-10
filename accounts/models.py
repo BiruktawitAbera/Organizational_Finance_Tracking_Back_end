@@ -242,3 +242,24 @@ class Income(models.Model):
 
     def __str__(self):
         return f"{self.amount} ({self.date}) - {self.department}"
+    
+# expense
+
+class Expense(models.Model):
+    PENDING = 'PENDING'
+    APPROVED = 'APPROVED'
+    DISAPPROVED = 'DISAPPROVED'
+    
+    STATUS_CHOICES = [
+        (PENDING, 'Pending'),
+        (APPROVED, 'Approved'),
+        (DISAPPROVED, 'Disapproved'),
+    ]
+    
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
+    department_head = models.ForeignKey(User, on_delete=models.CASCADE, related_name='expenses')
+    manager = models.ForeignKey(User, on_delete=models.CASCADE, related_name='managed_expenses', null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)

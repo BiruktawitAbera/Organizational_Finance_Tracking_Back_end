@@ -38,6 +38,12 @@ from .views import (
     AdminIncomeHistoryView,
     DepartmentIncomeSummaryView,
 
+        # expense tracking
+    ExpenseCreateView,
+    ExpenseListView,
+    ExpenseUpdateView,
+    DepartmentBudgetStatusView,
+    ExpenseDetailListView
 
 )
 
@@ -101,7 +107,13 @@ urlpatterns = [
     # Full history with filters (Admin/Manager only)
     path('incomes/history/', AdminIncomeHistoryView.as_view(), name='income-history'),
     
-
+    # expense
+    path('expenses/create/', ExpenseCreateView.as_view(), name='expense-create'),
+    path('expenses/', ExpenseListView.as_view(), name='expense-list'),
+    path('expenses/<int:pk>/update/', ExpenseUpdateView.as_view(), name='expense-update'),
+    path('budget-status/', DepartmentBudgetStatusView.as_view(), name='dept-budget-status'),
+        # New detailed view
+    path('expenses/all/', ExpenseDetailListView.as_view(), name='expense-detail-list'),
 
 
 ] 

@@ -35,6 +35,7 @@ from .serializers import (
     AccountRegistrationSerializer,
     PasswordResetSerializer,
     PasswordResetConfirmSerializer,
+    ExpenseDetailSerializer
 
 )
 from django.utils import timezone
@@ -49,6 +50,10 @@ from .permissions import (
     CanCreateIncome, CanVerifyIncome, IsDepartmentHead, 
     IsManager, IsAdmin, CanViewAllIncomes
 )
+from .models import Expense, ManagerBudget
+from .serializers import ExpenseSerializer, ExpenseUpdateSerializer
+
+import logging
 
 # Get user model
 User = get_user_model()
@@ -919,3 +924,147 @@ class AdminIncomeHistoryView(generics.ListAPIView):
 
     def get_queryset(self):
         return Income.objects.all()
+    
+
+# Expense logic
+
+# Department Head: Create Expense
+class ExpenseCreateView(generics.CreateAPIView):
+    serializer_class = ExpenseSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if not user.is_department_head():
+            raise permissions.PermissionDenied("Only department heads can create expenses")
+        
+        # Get allocated budget
+        budget = ManagerBudget.objects.filter(
+            allocated_to=user
+        ).aggregate(total=Sum('amount'))['total'] or 0
+        
+        # Get pending/approved expenses
+        used_budget = Expense.objects.filter(
+            department_head=user,
+            status__in=['PENDING', 'APPROVED']
+        ).aggregate(total=Sum('amount'))['total'] or 0
+        
+        # Check available budget
+        amount = serializer.validated_data['amount']
+        if float(used_budget) + float(amount) > float(budget):
+            available = float(budget) - float(used_budget)
+            raise serializers.ValidationError(
+                f"Exceeds available budget. Remaining: {available:.2f}"
+            )
+        
+        # Get associated manager
+        manager_budget = ManagerBudget.objects.filter(allocated_to=user).first()
+        serializer.save(
+            department_head=user,
+            manager=manager_budget.allocated_by if manager_budget else None
+        )
+
+# Department Head: List Expenses
+class ExpenseListView(generics.ListAPIView):
+    serializer_class = ExpenseSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        
+        if user.is_admin():
+            # Admins see all expenses
+            return Expense.objects.all()
+        
+        elif user.is_manager():
+            # Managers see expenses they need to approve
+            return Expense.objects.filter(manager=user)
+        
+        elif user.is_department_head():
+            # Department heads see only their expenses
+            return Expense.objects.filter(department_head=user)
+        
+        return Expense.objects.none()
+
+# Manager: Update Expense Status
+class ExpenseUpdateView(generics.UpdateAPIView):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseUpdateSerializer  # Use the new serializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_update(self, serializer):
+        user = self.request.user
+        expense = self.get_object()
+        
+        if not user.is_manager():
+            raise permissions.PermissionDenied("Only managers can approve expenses")
+        
+        if expense.manager != user:
+            raise permissions.PermissionDenied("You don't manage this expense")
+        
+        new_status = serializer.validated_data['status']
+        valid_statuses = [Expense.APPROVED, Expense.DISAPPROVED]
+        
+        if new_status not in valid_statuses:
+            raise serializers.ValidationError(
+                f"Invalid status. Allowed: {', '.join(valid_statuses)}"
+            )
+        
+        serializer.save()
+
+# Department Head: Budget Status
+class DepartmentBudgetStatusView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not user.is_department_head():
+            raise permissions.PermissionDenied("Only department heads can view budget status")
+        
+        # Get allocated budget
+        allocated = ManagerBudget.objects.filter(
+            allocated_to=user
+        ).aggregate(total=Sum('amount'))['total'] or 0
+        
+        # Get expense summaries
+        expenses = Expense.objects.filter(department_head=user).aggregate(
+            pending=Sum('amount', filter=Q(status='PENDING')),
+            approved=Sum('amount', filter=Q(status='APPROVED')),
+            total_used=Sum('amount', filter=Q(status__in=['PENDING', 'APPROVED']))
+        )
+        
+        available = float(allocated) - float(expenses['total_used'] or 0)
+        
+        return Response({
+            'allocated_budget': allocated,
+            'pending_expenses': expenses['pending'] or 0,
+            'approved_expenses': expenses['approved'] or 0,
+            'available_budget': available
+        })
+
+class ExpenseDetailListView(generics.ListAPIView):
+    serializer_class = ExpenseDetailSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        
+        if user.is_admin():
+            return Expense.objects.all()
+        
+        elif user.is_manager():
+            # Managers see expenses from all department heads they manage
+            managed_departments = ManagerBudget.objects.filter(
+                allocated_by=user
+            ).values_list('allocated_to', flat=True)
+            
+            return Expense.objects.filter(
+                department_head__in=managed_departments
+            )
+        
+        return Expense.objects.none()
+    
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
