@@ -317,33 +317,47 @@ class IncomeSerializer(serializers.ModelSerializer):
 
 # expense
 class ExpenseSerializer(serializers.ModelSerializer):
+    department = serializers.SerializerMethodField(read_only=True)
+    
     class Meta:
         model = Expense
         fields = '__all__'
-        read_only_fields = [ 'department_head', 'manager', 'created_at', 'updated_at']
+        read_only_fields = ['department_head', 'manager', 'created_at', 'updated_at', 'department']
+    
+    def get_department(self, obj):
+        # Directly access department through department_head
+        if obj.department_head and obj.department_head.department:
+            return obj.department_head.department
+        return None
 
 class ExpenseUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Expense
-        fields = ['status']  # Only allow status updates
+        fields = ['status']
 
 class ExpenseDetailSerializer(serializers.ModelSerializer):
     department_head_name = serializers.CharField(source='department_head.full_name', read_only=True)
     manager_name = serializers.CharField(source='manager.full_name', read_only=True)
-
+    department = serializers.SerializerMethodField(read_only=True)
+    
     class Meta:
         model = Expense
         fields = [
             'id', 'amount', 'description', 'status',
             'department_head', 'department_head_name',
-            'manager', 'manager_name', 'created_at', 'updated_at'
+            'manager', 'manager_name', 'created_at', 
+            'updated_at', 'department'
         ]
+    
+    def get_department(self, obj):
+        if obj.department_head and obj.department_head.department:
+            return obj.department_head.department
+        return None
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
         user = self.context['request'].user
         
-        # Hide sensitive fields from department heads
         if user.is_department_head():
             representation.pop('manager', None)
             representation.pop('manager_name', None)
