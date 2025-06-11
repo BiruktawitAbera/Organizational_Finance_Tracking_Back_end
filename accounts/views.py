@@ -27,8 +27,8 @@ from django.db.models import Q , Sum , Count
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import AdminBudget, ManagerBudget, User
-from .serializers import AdminBudgetSerializer, ManagerBudgetSerializer, UserSerializer
+from .models import AdminBudget, ManagerBudget, User, BudgetRequest
+from .serializers import AdminBudgetSerializer, ManagerBudgetSerializer, UserSerializer, BudgetRequestSerializer, BudgetRequestUpdateSerializer
 
 from .models import   CustomUser
 from .serializers import (
@@ -1051,3 +1051,84 @@ class ExpenseDetailListView(generics.ListAPIView):
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
+    
+# Department Head: Create Budget Request
+class BudgetRequestCreateView(generics.CreateAPIView):
+    serializer_class = BudgetRequestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if not user.is_department_head():
+            raise permissions.PermissionDenied(
+                "Only department heads can request additional budget"
+            )
+        serializer.save(requested_by=user)
+
+# Department Head: List Budget Requests
+class UserBudgetRequestListView(generics.ListAPIView):
+    serializer_class = BudgetRequestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_department_head():
+            return BudgetRequest.objects.filter(requested_by=user)
+        return BudgetRequest.objects.none()
+
+# Manager: List Budget Requests
+class ManagerBudgetRequestListView(generics.ListAPIView):
+    serializer_class = BudgetRequestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_manager():
+            # Get department heads managed by this manager
+            dept_heads = ManagerBudget.objects.filter(
+                allocated_by=user
+            ).values_list('allocated_to', flat=True)
+            return BudgetRequest.objects.filter(requested_by__in=dept_heads)
+        return BudgetRequest.objects.none()
+
+# Manager: Approve/Disapprove Budget Request
+class BudgetRequestUpdateView(generics.UpdateAPIView):
+    queryset = BudgetRequest.objects.all()
+    serializer_class = BudgetRequestUpdateSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_update(self, serializer):
+        user = self.request.user
+        budget_request = self.get_object()
+        
+        if not user.is_manager():
+            raise permissions.PermissionDenied(
+                "Only managers can process budget requests"
+            )
+        
+        # Check if manager manages this department head
+        if not ManagerBudget.objects.filter(
+            allocated_by=user,
+            allocated_to=budget_request.requested_by
+        ).exists():
+            raise permissions.PermissionDenied(
+                "You don't manage this department head"
+            )
+        
+        new_status = serializer.validated_data['status']
+        valid_statuses = [BudgetRequest.APPROVED, BudgetRequest.DISAPPROVED]
+        
+        if new_status not in valid_statuses:
+            raise serializers.ValidationError(
+                f"Invalid status. Allowed: {', '.join(valid_statuses)}"
+            )
+        
+        # If approved, add to allocated budget
+        if new_status == BudgetRequest.APPROVED:
+            ManagerBudget.objects.create(
+                allocated_by=user,
+                allocated_to=budget_request.requested_by,
+                amount=budget_request.amount
+            )
+        
+        serializer.save()

@@ -18,7 +18,7 @@ from .models import (
 )
 
 from .models import Income, DEPARTMENT_CHOICES
-from .models import Expense
+from .models import Expense, BudgetRequest
 
 
 
@@ -363,3 +363,17 @@ class ExpenseDetailSerializer(serializers.ModelSerializer):
             representation.pop('manager_name', None)
         
         return representation
+
+# additional budget request
+
+class BudgetRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BudgetRequest
+        fields = ['id', 'amount', 'reason', 'status', 'created_at']
+        read_only_fields = ['status', 'created_at']
+
+class BudgetRequestUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BudgetRequest
+        fields = ['status']
+        extra_kwargs = {'status': {'required': True}}

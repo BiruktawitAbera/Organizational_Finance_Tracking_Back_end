@@ -43,7 +43,14 @@ from .views import (
     ExpenseListView,
     ExpenseUpdateView,
     DepartmentBudgetStatusView,
-    ExpenseDetailListView
+    ExpenseDetailListView,
+
+    # budget request department head
+    BudgetRequestCreateView,
+    UserBudgetRequestListView,
+    ManagerBudgetRequestListView,
+    BudgetRequestUpdateView
+
 
 )
 
@@ -114,6 +121,11 @@ urlpatterns = [
     path('budget-status/', DepartmentBudgetStatusView.as_view(), name='dept-budget-status'),
         # New detailed view
     path('expenses/all/', ExpenseDetailListView.as_view(), name='expense-detail-list'),
+    # budget request department head
+    path('budget-request/', BudgetRequestCreateView.as_view()),
+    path('my-budget-requests/', UserBudgetRequestListView.as_view()),
+    path('manager/budget-requests/', ManagerBudgetRequestListView.as_view()),
+    path('budget-request/<int:pk>/', BudgetRequestUpdateView.as_view()),
 
 
 ] 
