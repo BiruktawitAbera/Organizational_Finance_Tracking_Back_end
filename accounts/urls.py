@@ -49,7 +49,12 @@ from .views import (
     BudgetRequestCreateView,
     UserBudgetRequestListView,
     ManagerBudgetRequestListView,
-    BudgetRequestUpdateView
+    BudgetRequestUpdateView,
+
+    # total income record quarterly
+    IncomeTimelineView,
+    # total approved expense record quarterly
+    ExpenseTimelineView
 
 
 )
@@ -126,6 +131,12 @@ urlpatterns = [
     path('my-budget-requests/', UserBudgetRequestListView.as_view()),
     path('manager/budget-requests/', ManagerBudgetRequestListView.as_view()),
     path('budget-request/<int:pk>/', BudgetRequestUpdateView.as_view()),
+
+    # total income record quarterly
+    path('incomes/timeline/', IncomeTimelineView.as_view(), name='income-timeline'),
+
+    # total approved expense record quarterly
+    path('expenses/timeline/', ExpenseTimelineView.as_view(), name='expense-timeline'),
 
 
 ] 

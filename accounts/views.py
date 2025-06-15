@@ -55,6 +55,15 @@ from .serializers import ExpenseSerializer, ExpenseUpdateSerializer
 
 import logging
 
+from django.db.models import Sum, F, Func, Value, CharField
+from django.db.models.functions import ExtractMonth, ExtractYear, ExtractQuarter, TruncMonth, TruncQuarter
+from datetime import datetime, timedelta
+from rest_framework.views import APIView
+from rest_framework.response import Response
+
+from django.core.exceptions import EmptyResultSet
+from rest_framework.exceptions import ValidationError
+
 # Get user model
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -1132,3 +1141,171 @@ class BudgetRequestUpdateView(generics.UpdateAPIView):
             )
         
         serializer.save()
+
+# quarterly income records
+
+class IncomeTimelineView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        # Get parameters with defaults
+        months = int(request.query_params.get('months', 3))
+        aggregate_by = request.query_params.get('aggregate_by', 'month')
+        
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=months*30)
+        
+        # Base queryset
+        queryset = Income.objects.filter(
+            date__gte=start_date,
+            date__lte=end_date
+        )
+        
+        # Apply department filter if manager
+        if request.user.is_manager and not request.user.is_admin:
+            managed_departments = ManagerBudget.objects.filter(
+                allocated_by=request.user
+            ).values_list('allocated_to__department', flat=True).distinct()
+            queryset = queryset.filter(department__in=managed_departments)
+        
+        # Database-agnostic aggregation
+        if aggregate_by == 'quarter':
+            # Quarterly aggregation - works with all databases
+            result = queryset.annotate(
+                year=ExtractYear('date'),
+                quarter=ExtractQuarter('date')
+            ).values('year', 'quarter').annotate(
+                total_amount=Sum('amount'),
+                record_count=Count('id')
+            ).order_by('year', 'quarter')
+            
+            # Format results
+            formatted_results = []
+            for entry in result:
+                period = f"{entry['year']}-Q{entry['quarter']}"
+                formatted_results.append({
+                    'period': period,
+                    'total_amount': entry['total_amount'],
+                    'record_count': entry['record_count']
+                })
+            result = formatted_results
+        else:
+            # Monthly aggregation (default)
+            result = queryset.annotate(
+                period=TruncMonth('date')
+            ).values('period').annotate(
+                total_amount=Sum('amount'),
+                record_count=Count('id')
+            ).order_by('period')
+        
+        # Format response
+        data = {
+            "time_period": f"Last {months} months",
+            "aggregation": aggregate_by,
+            "start_date": start_date.date(),
+            "end_date": end_date.date(),
+            "results": list(result)
+        }
+        
+        return Response(data)
+    
+# total expense record quarterly
+
+class ExpenseTimelineView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            # Validate and parse parameters
+            months = int(request.query_params.get('months', 3))
+            if months <= 0:
+                raise ValidationError("Months parameter must be a positive integer")
+                
+            aggregate_by = request.query_params.get('aggregate_by', 'month')
+            if aggregate_by not in ['month', 'quarter']:
+                raise ValidationError("Invalid aggregation type. Use 'month' or 'quarter'")
+            
+            # Calculate date range
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=months*30)
+            
+            # Base queryset - only approved expenses
+            queryset = Expense.objects.filter(
+                status='APPROVED',
+                created_at__gte=start_date,
+                created_at__lte=end_date
+            )
+            
+            # Apply security filtering
+            if not request.user.is_admin:
+                if request.user.is_manager:
+                    # Get departments managed by this manager
+                    managed_departments = ManagerBudget.objects.filter(
+                        allocated_by=request.user
+                    ).values_list('allocated_to__department', flat=True).distinct()
+                    
+                    # Filter expenses by department of department_head
+                    queryset = queryset.filter(
+                        department_head__userprofile__department__in=managed_departments
+                    )
+                elif request.user.is_department_head:
+                    # Only show expenses created by this department head
+                    queryset = queryset.filter(department_head=request.user)
+                else:
+                    queryset = Expense.objects.none()
+            
+            # Aggregation logic
+            if aggregate_by == 'quarter':
+                # Quarterly aggregation
+                result = queryset.annotate(
+                    year=ExtractYear('created_at'),
+                    quarter=ExtractQuarter('created_at')
+                ).values('year', 'quarter').annotate(
+                    total_amount=Sum('amount'),
+                    record_count=Count('id')
+                ).order_by('year', 'quarter')
+                
+                # Format quarterly results
+                formatted_results = []
+                for entry in result:
+                    formatted_results.append({
+                        'period': f"{entry['year']}-Q{entry['quarter']}",
+                        'total_amount': float(entry['total_amount']),
+                        'record_count': entry['record_count']
+                    })
+                result = formatted_results
+            else:
+                # Monthly aggregation (default)
+                result = queryset.annotate(
+                    period=TruncMonth('created_at')
+                ).values('period').annotate(
+                    total_amount=Sum('amount'),
+                    record_count=Count('id')
+                ).order_by('period')
+                
+                # Format monthly results
+                formatted_results = []
+                for entry in result:
+                    formatted_results.append({
+                        'period': entry['period'].strftime('%Y-%m'),
+                        'total_amount': float(entry['total_amount']),
+                        'record_count': entry['record_count']
+                    })
+                result = formatted_results
+            
+            return Response({
+                "time_period": f"Last {months} months",
+                "aggregation": aggregate_by,
+                "start_date": start_date.date(),
+                "end_date": end_date.date(),
+                "total_approved_expenses": sum(item['total_amount'] for item in result),
+                "results": result
+            })
+            
+        except (ValueError, ValidationError) as e:
+            return Response({"error": str(e)}, status=400)
+        except EmptyResultSet:
+            return Response({"results": []})
+        except Exception as e:
+            return Response({"error": "Server error"}, status=500)
