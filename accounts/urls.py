@@ -54,7 +54,9 @@ from .views import (
     # total income record quarterly
     IncomeTimelineView,
     # total approved expense record quarterly
-    ExpenseTimelineView
+    ExpenseTimelineView,
+    # user profile
+     UserProfileView
 
 
 )
@@ -137,6 +139,8 @@ urlpatterns = [
 
     # total approved expense record quarterly
     path('expenses/timeline/', ExpenseTimelineView.as_view(), name='expense-timeline'),
+    # user profile
+    path('user-profile/', UserProfileView.as_view(), name='user-profile'),
 
 
 ] 

@@ -64,6 +64,9 @@ from rest_framework.response import Response
 from django.core.exceptions import EmptyResultSet
 from rest_framework.exceptions import ValidationError
 
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
 # Get user model
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -1309,3 +1312,22 @@ class ExpenseTimelineView(APIView):
             return Response({"results": []})
         except Exception as e:
             return Response({"error": "Server error"}, status=500)
+        
+# user profile
+class UserProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        data = {
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "department": user.department if user.department else "",
+            "salary": user.salary
+        }
+
+        if user.role == 'admin' or user.id == request.user.id:
+            data["salary"] = user.salary
+        
+        return Response(data)        
