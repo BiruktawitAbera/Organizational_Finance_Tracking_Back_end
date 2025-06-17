@@ -63,7 +63,8 @@ from .views import (
      UserProfileView, 
     #  dashboared
     ManagerDashboardView,
-    DepartmentHeadDashboardView
+    DepartmentHeadDashboardView,
+    UserDeleteView
 
 
 
@@ -77,6 +78,7 @@ urlpatterns = [
     path('change-password/', EnforcePasswordChangeView.as_view(), name='change_password'),
     path('user-role/', UserRoleView.as_view(), name="user_role"),
     path('users/', UserListView.as_view(), name='user-list'),
+    path('users/<int:pk>/', UserListView.as_view(), name='user-delete'), 
     path('request-password-reset/', RequestPasswordResetView.as_view(), name="request-password-reset"),
 
     # Password reset confirmation URL (under api/accounts/)
@@ -155,6 +157,7 @@ urlpatterns = [
     path('dashboard/admin/', AdminDashboardView.as_view(), name='admin_dashboard'),
     path('manager/dashboard/', ManagerDashboardView.as_view(), name='manager_dashboard'),
     path('department/dashboard/', DepartmentHeadDashboardView.as_view(), name='dept_head_dashboard'),
+    path('api/users/delete/<int:user_id>/', UserDeleteView.as_view(), name='user-delete'),
 
 
 ] 

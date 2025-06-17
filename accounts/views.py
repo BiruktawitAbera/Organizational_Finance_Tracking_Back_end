@@ -238,12 +238,31 @@ class UserListView(APIView):
 
     def get(self, request):
         role = request.query_params.get('role')
-        if not role:
-            return Response({"error": "Role parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        users = CustomUser.objects.filter(role=role)
-        data = [{"email": user.email, "department": user.department} for user in users]
+        users = CustomUser.objects.all()
+        
+        if role:
+            users = users.filter(role=role)
+        
+        data = [{"email": user.email, "department": user.department, "username":user.username, "role":user.role, "id": user.id,} for user in users]
         return Response(data)
+class UserDeleteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, user_id):
+        # Prevent users from deleting themselves
+        if request.user.id == user_id:
+            return Response(
+                {"error": "You cannot delete your own account"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        user = get_object_or_404(CustomUser, id=user_id)
+        user.delete()
+        
+        return Response(
+            {"message": f"User {user.email} deleted successfully"},
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 class RequestPasswordResetView(generics.GenericAPIView):
     serializer_class = PasswordResetSerializer
@@ -555,10 +574,16 @@ class ManagerBudgetListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        
+        if user.is_admin():  # Admin sees ALL budgets
+            return ManagerBudget.objects.all()
+        
         if user.is_manager():
             return ManagerBudget.objects.filter(allocated_by=user)
-        elif user.is_department_head():
+        
+        if user.is_department_head():
             return ManagerBudget.objects.filter(allocated_to=user)
+        
         return ManagerBudget.objects.none()
 
 class ManagerBudgetCreateView(generics.CreateAPIView):
@@ -1328,7 +1353,7 @@ class ExpenseTimelineView(APIView):
         except Exception as e:
             return Response({"error": "Server error"}, status=500)
 
-    
+      
     
     # prediciton creation form
 
