@@ -66,6 +66,21 @@ from rest_framework.exceptions import ValidationError
 
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+# dashboared
+from .models import (
+    ManagerBudget, 
+    Expense, 
+    BudgetRequest,
+    Income,
+    User
+)
+
+from datetime import timedelta
+
+from django.db.models.functions import TruncMonth, ExtractYear, ExtractQuarter
+import pandas as pd
+# import joblib
+import os
 
 # Get user model
 User = get_user_model()
@@ -1312,6 +1327,310 @@ class ExpenseTimelineView(APIView):
             return Response({"results": []})
         except Exception as e:
             return Response({"error": "Server error"}, status=500)
+
+    
+    
+    # prediciton creation form
+
+
+class BudgetPredictionView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            # Validate manager permissions
+            if not request.user.is_manager:
+                return Response(
+                    {"error": "Only managers can request predictions"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Parse and validate request data
+            data = request.data
+            start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+            end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
+            prediction_span = int(data['prediction_span'])
+            period_type = data.get('period_type', 'monthly').lower()
+            
+            if start_date >= end_date:
+                raise ValidationError("Start date must be before end date")
+                
+            if prediction_span <= 0 or prediction_span > 24:
+                raise ValidationError("Prediction span must be between 1-24 periods")
+                
+            if period_type not in ['monthly', 'quarterly']:
+                raise ValidationError("Period type must be 'monthly' or 'quarterly'")
+            
+            # Get managed departments
+            managed_departments = ManagerBudget.objects.filter(
+                allocated_by=request.user
+            ).values_list('department', flat=True).distinct()
+            
+            if not managed_departments:
+                return Response(
+                    {"error": "No departments managed by this user"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Generate predictions
+            income_pred = self.generate_predictions(
+                'income', 
+                period_type,
+                start_date,
+                end_date,
+                managed_departments,
+                prediction_span
+            )
+            expense_pred = self.generate_predictions(
+                'expense', 
+                period_type,
+                start_date,
+                end_date,
+                managed_departments,
+                prediction_span
+            )
+            
+            # Calculate net budget prediction
+            net_prediction = []
+            for inc, exp in zip(income_pred, expense_pred):
+                net_prediction.append({
+                    'period': inc['period'],
+                    'income': inc['total_amount'],
+                    'expense': exp['total_amount'],
+                    'net_budget': inc['total_amount'] - exp['total_amount']
+                })
+            
+            return Response({
+                "prediction_config": {
+                    "start_date": start_date.strftime('%Y-%m-%d'),
+                    "end_date": end_date.strftime('%Y-%m-%d'),
+                    "prediction_span": prediction_span,
+                    "period_type": period_type,
+                    "managed_departments": list(managed_departments)
+                },
+                "predicted_income": income_pred,
+                "predicted_expense": expense_pred,
+                "net_budget_prediction": net_prediction
+            })
+            
+        except ValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Prediction failed: {str(e)}", exc_info=True)
+            return Response(
+                {"error": f"Prediction failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def generate_predictions(self, data_type, period_type, start_date, end_date, departments, prediction_span):
+        """Generate predictions with fallbacks to ensure data exists"""
+        # Get historical data
+        historical_data = self.get_historical_data(
+            data_type, start_date, end_date, period_type, departments
+        )
+        
+        # If we have historical data, use ML model
+        if historical_data:
+            try:
+                return self.generate_ml_predictions(historical_data, prediction_span, data_type, period_type)
+            except Exception as e:
+                logger.warning(f"ML prediction failed, using fallback: {str(e)}")
+        
+        # Fallback 1: Get department averages
+        try:
+            return self.department_average_forecast(
+                data_type, period_type, departments, prediction_span, end_date
+            )
+        except Exception as e:
+            logger.warning(f"Department average failed: {str(e)}")
+        
+        # Fallback 2: Use system-wide averages
+        try:
+            return self.system_average_forecast(
+                data_type, period_type, prediction_span, end_date
+            )
+        except Exception as e:
+            logger.error(f"All prediction methods failed: {str(e)}")
+            
+        # Final fallback: Return default values
+        return self.default_forecast(data_type, period_type, prediction_span, end_date)
+
+    def get_historical_data(self, data_type, start_date, end_date, period_type, departments):
+        """Retrieve historical data based on data type"""
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time())
+        
+        if data_type == 'income':
+            queryset = Income.objects.filter(
+                date__range=(start_dt, end_dt),
+                department__in=departments
+            )
+            date_field = 'date'
+        else:  # expense
+            # Get users in departments from User model directly
+            user_ids = User.objects.filter(
+                department__in=departments
+            ).values_list('id', flat=True)
+            
+            queryset = Expense.objects.filter(
+                created_at__range=(start_dt, end_dt),
+                status='APPROVED',
+                department_head_id__in=user_ids
+            )
+            date_field = 'created_at'
+
+        # Aggregate data
+        if period_type == 'quarterly':
+            result = queryset.annotate(
+                year=ExtractYear(date_field),
+                quarter=ExtractQuarter(date_field)
+            ).values('year', 'quarter').annotate(
+                total_amount=Sum('amount')
+            ).order_by('year', 'quarter')
+            
+            return [
+                {
+                    'period': f"{item['year']}-Q{item['quarter']}",
+                    'total_amount': float(item['total_amount'] or 0)
+                } for item in result
+            ]
+        else:  # monthly
+            result = queryset.annotate(
+                period=TruncMonth(date_field)
+            ).values('period').annotate(
+                total_amount=Sum('amount')
+            ).order_by('period')
+            
+            return [
+                {
+                    'period': item['period'].strftime('%Y-%m'),
+                    'total_amount': float(item['total_amount'] or 0)
+                } for item in result
+            ]
+
+    def generate_ml_predictions(self, historical_data, prediction_span, data_type, period_type):
+        """Generate predictions using ML model"""
+        model_dir = "financial_models/"
+        model_file = f"{data_type}_{period_type}_model.joblib"
+        model_path = os.path.join(model_dir, model_file)
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model not found: {model_file}")
+        
+        # Load model
+        model = joblib.load(model_path)
+        
+        # Prepare data
+        df = pd.DataFrame(historical_data)
+        
+        # Convert period strings to datetime objects
+        if period_type == 'quarterly':
+            # Convert "2023-Q1" to datetime (first day of quarter)
+            df['datetime'] = df['period'].apply(
+                lambda s: pd.Timestamp(
+                    year=int(s.split('-')[0]), 
+                    month=(int(s.split('-')[1][1:])-1)*3+1, 
+                    day=1
+                )
+            )
+        else:  # monthly
+            df['datetime'] = pd.to_datetime(df['period'])
+        
+        df = df.set_index('datetime').asfreq('QS' if period_type=='quarterly' else 'MS').fillna(0)
+        
+        # Generate predictions
+        forecast = model.predict(n_periods=prediction_span)
+        
+        # Create future periods
+        last_date = df.index[-1]
+        if period_type == 'quarterly':
+            date_range = pd.date_range(
+                start=last_date + pd.DateOffset(months=3),
+                periods=prediction_span,
+                freq='QS'
+            )
+            # Format quarterly periods correctly
+            formatted_periods = [
+                f"{d.year}-Q{(d.month-1)//3 + 1}" 
+                for d in date_range
+            ]
+        else:
+            date_range = pd.date_range(
+                start=last_date + pd.DateOffset(months=1),
+                periods=prediction_span,
+                freq='MS'
+            )
+            formatted_periods = [d.strftime('%Y-%m') for d in date_range]
+        
+        return [
+            {
+                'period': period,
+                'total_amount': float(amount)
+            } for period, amount in zip(formatted_periods, forecast)
+        ]
+    
+    def department_average_forecast(self, data_type, period_type, departments, periods, end_date):
+        """Fallback forecasting using department averages"""
+        if data_type == 'income':
+            avg_amount = Income.objects.filter(
+                department__in=departments
+            ).aggregate(avg=Avg('amount'))['avg'] or 0
+        else:
+            # Get average expense for users in departments
+            user_ids = User.objects.filter(department__in=departments).values_list('id', flat=True)
+            avg_amount = Expense.objects.filter(
+                status='APPROVED',
+                department_head_id__in=user_ids
+            ).aggregate(avg=Avg('amount'))['avg'] or 0
+        
+        return self._generate_forecast_periods(period_type, periods, end_date, avg_amount)
+
+    def system_average_forecast(self, data_type, period_type, periods, end_date):
+        """Fallback to system-wide averages"""
+        if data_type == 'income':
+            avg_amount = Income.objects.all().aggregate(avg=Avg('amount'))['avg'] or 0
+        else:
+            avg_amount = Expense.objects.filter(
+                status='APPROVED'
+            ).aggregate(avg=Avg('amount'))['avg'] or 0
+        
+        return self._generate_forecast_periods(period_type, periods, end_date, avg_amount)
+
+    def default_forecast(self, data_type, period_type, periods, end_date):
+        """Final fallback with default values"""
+        DEFAULT_INCOME = 10000.0  # Adjust as needed
+        DEFAULT_EXPENSE = 8000.0   # Adjust as needed
+        
+        amount = DEFAULT_INCOME if data_type == 'income' else DEFAULT_EXPENSE
+        return self._generate_forecast_periods(period_type, periods, end_date, amount)
+
+    def _generate_forecast_periods(self, period_type, periods, end_date, amount):
+        """Generate forecast periods with consistent amount"""
+        base_date = pd.Timestamp(end_date)
+        if period_type == 'quarterly':
+            date_range = pd.date_range(
+                start=base_date + pd.DateOffset(months=3),
+                periods=periods,
+                freq='QS'
+            )
+            # Format quarterly periods correctly
+            formatted_periods = [
+                f"{d.year}-Q{(d.month-1)//3 + 1}" 
+                for d in date_range
+            ]
+        else:
+            date_range = pd.date_range(
+                start=base_date + pd.DateOffset(months=1),
+                periods=periods,
+                freq='MS'
+            )
+            formatted_periods = [d.strftime('%Y-%m') for d in date_range]
+        
+        return [{
+            'period': period,
+            'total_amount': float(amount)
+        } for period in formatted_periods]
+
         
 # user profile
 class UserProfileView(APIView):
@@ -1331,3 +1650,295 @@ class UserProfileView(APIView):
             data["salary"] = user.salary
         
         return Response(data)        
+    # dashboared
+
+class BaseDashboardView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_time_ranges(self):
+        now = timezone.now()
+        return {
+            'current_quarter': (now.month - 1) // 3 + 1,
+            'current_year': now.year,
+            'six_months_ago': now - timedelta(days=180)
+        }
+
+class AdminDashboardView(BaseDashboardView):
+    def get(self, request):
+        try:
+            # Calculate total budget allocated by admins
+            total_budget = ManagerBudget.objects.aggregate(
+                total=Sum('amount')
+            )['total'] or 0
+            
+            # Calculate total approved expenses
+            total_expenses = Expense.objects.filter(
+                status='APPROVED'
+            ).aggregate(
+                total=Sum('amount')
+            )['total'] or 0
+            
+            # Budget allocation per department
+            budget_allocation = ManagerBudget.objects.values(
+                'department'
+            ).annotate(
+                total_amount=Sum('amount')
+            ).order_by('-total_amount')
+            
+            # Format budget allocation data
+            allocation_data = [
+                {'department': item['department'], 
+                 'amount': float(item['total_amount'])}
+                for item in budget_allocation
+                if item['department']
+            ]
+            
+            # Quarterly income timeline
+            income_timeline = Income.objects.values(
+                'date__quarter', 'date__year'
+            ).annotate(
+                total_income=Sum('amount')
+            ).order_by('date__year', 'date__quarter')
+            
+            # Format income timeline
+            income_timeline_data = [
+                {'quarter': f"Q{item['date__quarter']} {item['date__year']}", 
+                 'amount': float(item['total_income'])}
+                for item in income_timeline
+            ]
+            
+            # Quarterly expense timeline
+            expense_timeline = Expense.objects.filter(
+                status='APPROVED'
+            ).values(
+                'created_at__quarter', 'created_at__year'
+            ).annotate(
+                total_expense=Sum('amount')
+            ).order_by('created_at__year', 'created_at__quarter')
+            
+            # Format expense timeline
+            expense_timeline_data = [
+                {'quarter': f"Q{item['created_at__quarter']} {item['created_at__year']}", 
+                 'amount': float(item['total_expense'])}
+                for item in expense_timeline
+            ]
+            
+            return Response({
+                'total_budget': float(total_budget),
+                'total_expenses': float(total_expenses),
+                'budget_allocation': allocation_data,
+                'income_timeline': income_timeline_data,
+                'expense_timeline': expense_timeline_data
+            }, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ManagerDashboardView(BaseDashboardView):
+    def get(self, request):
+        try:
+            user = request.user
+            if not user.is_manager:
+                return Response({'error': 'Access restricted to managers'}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Get managed department heads
+            dept_heads = ManagerBudget.objects.filter(
+                allocated_by=user
+            ).values_list('allocated_to', flat=True)
+            
+            # Total managed budget
+            total_budget = ManagerBudget.objects.filter(
+                allocated_by=user
+            ).aggregate(
+                total=Sum('amount')
+            )['total'] or 0
+            
+            # Pending requests (expenses + budget requests)
+            pending_expenses = Expense.objects.filter(
+                department_head__in=dept_heads,
+                status='PENDING'
+            ).count()
+            
+            pending_budget_requests = BudgetRequest.objects.filter(
+                requested_by__in=dept_heads,
+                status='PENDING'
+            ).count()
+            
+            pending_requests = pending_expenses + pending_budget_requests
+            
+            # Monthly expense trends
+            time_ranges = self.get_time_ranges()
+            
+            expense_trends = Expense.objects.filter(
+                department_head__in=dept_heads,
+                created_at__gte=time_ranges['six_months_ago'],
+                status='APPROVED'
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                total_amount=Sum('amount')
+            ).order_by('month')
+            
+            # Format expense trends
+            trends_data = [
+                {'month': item['month'].strftime('%b %Y'), 
+                 'amount': float(item['total_amount'])}
+                for item in expense_trends
+            ]
+            
+            # Recent activities (pending items)
+            recent_activities = []
+            
+            # Add pending expenses
+            pending_expenses_list = Expense.objects.filter(
+                department_head__in=dept_heads,
+                status='PENDING'
+            ).select_related('department_head')[:5]
+            
+            for expense in pending_expenses_list:
+                recent_activities.append({
+                    'type': 'expense',
+                    'id': expense.id,
+                    'department': expense.department_head.department,
+                    'amount': float(expense.amount),
+                    'description': expense.description,
+                    'date': expense.created_at,
+                    'link': f'/expenses/{expense.id}/update/'
+                })
+            
+            # Add pending budget requests
+            pending_budget_list = BudgetRequest.objects.filter(
+                requested_by__in=dept_heads,
+                status='PENDING'
+            ).select_related('requested_by')[:5]
+            
+            for budget in pending_budget_list:
+                recent_activities.append({
+                    'type': 'budget_request',
+                    'id': budget.id,
+                    'department': budget.requested_by.department,
+                    'amount': float(budget.amount),
+                    'description': budget.reason,
+                    'date': budget.created_at,
+                    'link': f'/budget-request/{budget.id}/'
+                })
+            
+            # Sort by date
+            recent_activities.sort(key=lambda x: x['date'], reverse=True)
+            
+            return Response({
+                'total_budget': float(total_budget),
+                'pending_requests': pending_requests,
+                'expense_trends': trends_data,
+                'recent_activities': recent_activities[:5]  # Return top 5
+            }, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class DepartmentHeadDashboardView(BaseDashboardView):
+    def get(self, request):
+        try:
+            user = request.user
+            if not user.is_department_head:
+                return Response({'error': 'Access restricted to department heads'}, 
+                                status=status.HTTP_403_FORBIDDEN)
+            
+            # Total allocated budget
+            total_budget = ManagerBudget.objects.filter(
+                allocated_to=user
+            ).aggregate(
+                total=Sum('amount')
+            )['total'] or 0
+            
+            # Approved expenses
+            approved_expenses = Expense.objects.filter(
+                department_head=user,
+                status='APPROVED'
+            ).aggregate(
+                total=Sum('amount')
+            )['total'] or 0
+            
+            # Pending expenses
+            pending_expenses = Expense.objects.filter(
+                department_head=user,
+                status='PENDING'
+            ).aggregate(
+                total=Sum('amount')
+            )['total'] or 0
+            
+            # Available budget
+            available_budget = total_budget - approved_expenses - pending_expenses
+            
+            # Pending requests count
+            pending_requests = Expense.objects.filter(
+                department_head=user,
+                status='PENDING'
+            ).count()
+            
+            # Monthly expense trends
+            time_ranges = self.get_time_ranges()
+            
+            expense_trends = Expense.objects.filter(
+                department_head=user,
+                created_at__gte=time_ranges['six_months_ago']
+            ).annotate(
+                month=TruncMonth('created_at')
+            ).values('month').annotate(
+                total_amount=Sum('amount')
+            ).order_by('month')
+            
+            # Format expense trends
+            trends_data = [
+                {'month': item['month'].strftime('%b %Y'), 
+                 'amount': float(item['total_amount'])}
+                for item in expense_trends
+            ]
+            
+            # Recent activities
+            recent_activities = []
+            
+            # Add expenses
+            expenses = Expense.objects.filter(
+                department_head=user
+            ).order_by('-created_at')[:5]
+            
+            for expense in expenses:
+                recent_activities.append({
+                    'type': 'expense',
+                    'id': expense.id,
+                    'amount': float(expense.amount),
+                    'description': expense.description,
+                    'status': expense.status,
+                    'date': expense.created_at
+                })
+            
+            # Add budget requests
+            budget_requests = BudgetRequest.objects.filter(
+                requested_by=user
+            ).order_by('-created_at')[:2]
+            
+            for budget in budget_requests:
+                recent_activities.append({
+                    'type': 'budget_request',
+                    'id': budget.id,
+                    'amount': float(budget.amount),
+                    'description': budget.reason,
+                    'status': budget.status,
+                    'date': budget.created_at
+                })
+            
+            # Sort by date
+            recent_activities.sort(key=lambda x: x['date'], reverse=True)
+            
+            return Response({
+                'total_budget': float(total_budget),
+                'available_budget': float(available_budget),
+                'pending_requests': pending_requests,
+                'expense_trends': trends_data,
+                'recent_activities': recent_activities[:5]  # Return top 5
+            }, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

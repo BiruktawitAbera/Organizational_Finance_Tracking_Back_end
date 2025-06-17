@@ -2,6 +2,7 @@
 from django.urls import path, include
 from djoser.views import UserViewSet
 from rest_framework.routers import DefaultRouter
+from django.db.models.functions import TruncMonth
 
 from .views import (
     RegisterAccountsView, 
@@ -55,8 +56,15 @@ from .views import (
     IncomeTimelineView,
     # total approved expense record quarterly
     ExpenseTimelineView,
+    # predictions
+
+    BudgetPredictionView,
     # user profile
-     UserProfileView
+     UserProfileView, 
+    #  dashboared
+    ManagerDashboardView,
+    DepartmentHeadDashboardView
+
 
 
 )
@@ -139,8 +147,14 @@ urlpatterns = [
 
     # total approved expense record quarterly
     path('expenses/timeline/', ExpenseTimelineView.as_view(), name='expense-timeline'),
+    # predicitons
+    path('predictionss/',  BudgetPredictionView.as_view(), name='budget-predictions'),
     # user profile
     path('user-profile/', UserProfileView.as_view(), name='user-profile'),
+    # dashboared
+    path('dashboard/admin/', AdminDashboardView.as_view(), name='admin_dashboard'),
+    path('manager/dashboard/', ManagerDashboardView.as_view(), name='manager_dashboard'),
+    path('department/dashboard/', DepartmentHeadDashboardView.as_view(), name='dept_head_dashboard'),
 
 
 ] 

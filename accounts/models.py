@@ -293,3 +293,6 @@ class BudgetRequest(models.Model):
 
     def __str__(self):
         return f"{self.requested_by} - {self.amount} - {self.status}"
+    
+    # dashboared
+

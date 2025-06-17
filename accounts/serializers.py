@@ -26,6 +26,7 @@ User = get_user_model()
 
 
 # ✅ Account Registration Serializer (Includes Email-Based Password Setup)
+
 class AccountRegistrationSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -377,3 +378,6 @@ class BudgetRequestUpdateSerializer(serializers.ModelSerializer):
         model = BudgetRequest
         fields = ['status']
         extra_kwargs = {'status': {'required': True}}
+
+
+
